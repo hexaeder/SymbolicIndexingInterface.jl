@@ -32,7 +32,7 @@ function getu(sys, sym)
     _getu(sys, symtype, elsymtype, sym)
 end
 
-struct GetStateIndex{I} <: AbstractGetIndexer
+struct GetStateIndex{I} <: AbstractStateGetIndexer
     idx::I
 end
 function (gsi::GetStateIndex)(::Timeseries, prob)
@@ -49,13 +49,12 @@ function _getu(sys, ::NotSymbolic, ::NotSymbolic, sym)
     return GetStateIndex(sym)
 end
 
-struct GetpAtStateTime{G} <: AbstractGetIndexer
+struct GetpAtStateTime{G} <: AbstractStateGetIndexer
     getter::G
 end
 
 function (g::GetpAtStateTime)(::Timeseries, prob)
-    [g.getter(parameter_values_at_state_time(prob, i))
-     for i in eachindex(current_time(prob))]
+    g.getter.(parameter_values_at_state_time(prob))
 end
 function (g::GetpAtStateTime)(::Timeseries, prob, i)
     g.getter(parameter_values_at_state_time(prob, i))
@@ -64,20 +63,19 @@ function (g::GetpAtStateTime)(::NotTimeseries, prob)
     g.getter(prob)
 end
 
-struct GetIndepvar <: AbstractGetIndexer end
+struct GetIndepvar <: AbstractStateGetIndexer end
 
 (::GetIndepvar)(::IsTimeseriesTrait, prob) = current_time(prob)
 (::GetIndepvar)(::Timeseries, prob, i) = current_time(prob, i)
 
-struct TimeDependentObservedFunction{F} <: AbstractGetIndexer
+struct TimeDependentObservedFunction{F} <: AbstractStateGetIndexer
     obsfn::F
 end
 
 function (o::TimeDependentObservedFunction)(::Timeseries, prob)
-    curtime = current_time(prob)
-    return o.obsfn.(state_values(prob),
-        (parameter_values_at_state_time(prob, i) for i in eachindex(curtime)),
-        curtime)
+    o.obsfn.(state_values(prob),
+        parameter_values_at_state_time(prob),
+        current_time(prob))
 end
 function (o::TimeDependentObservedFunction)(::Timeseries, prob, i)
     return o.obsfn(state_values(prob, i),
@@ -88,7 +86,7 @@ function (o::TimeDependentObservedFunction)(::NotTimeseries, prob)
     return o.obsfn(state_values(prob), parameter_values(prob), current_time(prob))
 end
 
-struct TimeIndependentObservedFunction{F} <: AbstractGetIndexer
+struct TimeIndependentObservedFunction{F} <: AbstractStateGetIndexer
     obsfn::F
 end
 
@@ -115,7 +113,7 @@ function _getu(sys, ::ScalarSymbolic, ::SymbolicTypeTrait, sym)
     error("Invalid symbol $sym for `getu`")
 end
 
-struct MultipleGetters{G} <: AbstractGetIndexer
+struct MultipleGetters{G} <: AbstractStateGetIndexer
     getters::G
 end
 
@@ -130,7 +128,7 @@ function (mg::MultipleGetters)(::NotTimeseries, prob)
     return map(g -> g(prob), mg.getters)
 end
 
-struct AsTupleWrapper{G} <: AbstractGetIndexer
+struct AsTupleWrapper{G} <: AbstractStateGetIndexer
     getter::G
 end
 

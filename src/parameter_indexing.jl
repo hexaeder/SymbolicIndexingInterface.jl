@@ -1,21 +1,3 @@
-parameter_values(arr::AbstractArray) = arr
-parameter_values(arr::Tuple) = arr
-parameter_values(arr::AbstractArray, i) = arr[i]
-parameter_values(arr::Tuple, i) = arr[i]
-parameter_values(prob, i) = parameter_values(parameter_values(prob), i)
-
-parameter_values_at_time(p, i) = parameter_values(p)
-
-parameter_values_at_state_time(p, i) = parameter_values(p)
-
-parameter_timeseries(_) = [0]
-
-# Tuple only included for the error message
-function set_parameter!(sys::Union{AbstractArray, Tuple}, val, idx)
-    sys[idx] = val
-end
-set_parameter!(sys, val, idx) = set_parameter!(parameter_values(sys), val, idx)
-
 """
     getp(indp, sym)
 
@@ -35,10 +17,11 @@ that implement `getindex`.
 
 If the returned function is used on a timeseries object which saves parameter timeseries, it
 can be used to index said timeseries. The timeseries object must implement
-[`parameter_timeseries`](@ref), [`parameter_values_at_time`](@ref) and
-[`parameter_values_at_state_time`](@ref). The function returned from `getp` will can be passed
-`Colon()` (`:`) as the last argument to return the entire parameter timeseries for `p`, or
-any index into the parameter timeseries for a subset of values.
+[`parameter_timeseries`](@ref), [`parameter_values_at_time`](@ref),
+[`parameter_values_at_state_time`](@ref), and [`is_parameter_timeseries`](@ref). The function
+returned from `getp` can be passed `Colon()` (`:`) as the last argument to return the
+entire parameter timeseries for `p`, or any index into the parameter timeseries for a
+subset of values.
 """
 function getp(sys, p)
     symtype = symbolic_type(p)
@@ -46,7 +29,7 @@ function getp(sys, p)
     _getp(sys, symtype, elsymtype, p)
 end
 
-struct GetParameterIndex{I} <: AbstractGetIndexer
+struct GetParameterIndex{I} <: AbstractParameterGetIndexer
     idx::I
 end
 
@@ -59,10 +42,16 @@ function (gpi::GetParameterIndex)(::Timeseries, prob, i::Union{Int, CartesianInd
             prob, only(to_indices(parameter_timeseries(prob), (i,)))),
         gpi.idx)
 end
-function (gpi::GetParameterIndex)(::Timeseries, prob, i::Union{AbstractArray{Bool}, Colon})
+function (gpi::GetParameterIndex)(::Timeseries, prob, i::Colon)
     parameter_values.(
         parameter_values_at_time.((prob,),
-            (j for j in only(to_indices(parameter_timeseries(prob), (i,))))),
+            only(to_indices(parameter_timeseries(prob), (i,)))),
+        (gpi.idx,))
+end
+function (gpi::GetParameterIndex)(::Timeseries, prob, i::AbstractArray{Bool})
+    parameter_values.(
+        map(Base.Fix1(parameter_values_at_time, prob),
+            only(to_indices(parameter_timeseries(prob), (i,)))),
         (gpi.idx,))
 end
 function (gpi::GetParameterIndex)(::Timeseries, prob, i)
@@ -84,14 +73,19 @@ struct MultipleParameterGetters{G} <: AbstractGetIndexer
 end
 
 function (mpg::MultipleParameterGetters)(::IsTimeseriesTrait, prob)
-    map(g -> g(prob), mpg.getters)
+    map(CallWith(prob), mpg.getters)
 end
 function (mpg::MultipleParameterGetters)(::Timeseries, prob, i::Union{Int, CartesianIndex})
-    map(g -> g(prob, i), mpg.getters)
+    map(CallWith(prob, i), mpg.getters)
 end
 function (mpg::MultipleParameterGetters)(::Timeseries, prob, i)
-    [map(g -> g(prob, j), mpg.getters)
-     for j in only(to_indices(parameter_timeseries(prob), (i,)))]
+    map.(CallWith.((prob,), only(to_indices(parameter_timeseries(prob), (i,)))),
+        (mpg.getters,))
+end
+function (mpg::MultipleParameterGetters)(::Timeseries, prob, i::AbstractArray{Bool})
+    callers = map(
+        Base.Fix1(CallWith, prob), only(to_indices(parameter_timeseries(prob), (i,))))
+    map.(callers, (mpg.getters,))
 end
 function (mpg::MultipleParameterGetters)(buffer::AbstractArray, ::Timeseries, prob)
     for (g, bufi) in zip(mpg.getters, eachindex(buffer))
@@ -123,10 +117,10 @@ function (mpg::MultipleParameterGetters)(buffer::AbstractArray, ::NotTimeseries,
 end
 
 function (mpg::MultipleParameterGetters)(buffer::AbstractArray, prob, i...)
-    mpg(buffer, is_timeseries(prob), prob, i...)
+    mpg(buffer, is_parameter_timeseries(prob), prob, i...)
 end
 function (mpg::MultipleParameterGetters)(prob, i...)
-    mpg(is_timeseries(prob), prob, i...)
+    mpg(is_parameter_timeseries(prob), prob, i...)
 end
 
 for (t1, t2) in [
