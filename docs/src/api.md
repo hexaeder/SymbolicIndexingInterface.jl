@@ -32,6 +32,20 @@ allvariables
 observed
 ```
 
+#### Parameter timeseries
+
+If the index provider contains parameters that change during the course of the simulation
+at discrete intervals, it must implement the following methods to ensure correct
+functioning of [`getu`](@ref) and [`getp`](@ref) for value providers that save the parameter
+timeseries. Note that there can be multiple parameter timeseries, in case different parameters
+change at different times.
+
+```@docs
+is_timeseries_parameter
+timeseries_parameter_index
+ParameterTimeseriesIndex
+```
+
 ## Value provider interface
 
 ### State indexing
@@ -67,8 +81,8 @@ correct functioning of [`getu`](@ref) and [`getp`](@ref).
 ```@docs
 is_parameter_timeseries
 parameter_timeseries
-parameter_values_at_time
 parameter_values_at_state_time
+parameter_timeseries_at_state_time
 ```
 
 ### Batched Queries and Updates
