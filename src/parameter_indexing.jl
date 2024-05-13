@@ -15,13 +15,24 @@ Requires that the value provider implement [`parameter_values`](@ref). This func
 may not always need to be implemented, and has a default implementation for collections
 that implement `getindex`.
 
-If the returned function is used on a timeseries object which saves parameter timeseries, it
-can be used to index said timeseries. The timeseries object must implement
-[`parameter_timeseries`](@ref), [`parameter_values_at_time`](@ref),
-[`parameter_values_at_state_time`](@ref), and [`is_parameter_timeseries`](@ref). The function
-returned from `getp` can be passed `Colon()` (`:`) as the last argument to return the
-entire parameter timeseries for `p`, or any index into the parameter timeseries for a
-subset of values.
+If the returned function is used on a timeseries object which saves parameter timeseries,
+it can be used to index said timeseries. The timeseries object must implement
+[`parameter_timeseries`](@ref), [`parameter_values_at_state_time`](@ref),
+[`parameter_timeseries_at_state_time`](@ref) and [`is_parameter_timeseries`](@ref).
+
+If `sym` is a timeseries parameter, the function will return the timeseries of the
+parameter if the value provider is a parameter timeseries object. An additional argument
+can be provided to the function indicating the specific indexes in the timeseries at
+which to access the values. If `sym` is an array of parameters, the following cases
+apply:
+
+- All parameters are non-timeseries parameters: The function returns the value of each
+  parameter.
+- All parameters are timeseries parameters: All the parameters must belong to the same
+  timeseries (otherwise `getp` will error). The function returns the timeseries of all
+  parameter values, and can be accessed at specific indices in the timeseries.
+- A mix of timeseries and non-timeseries parameters: The function can _only_ be used on
+  non-timeseries objects and will return the value of each parameter at in the object.
 """
 function getp(sys, p)
     symtype = symbolic_type(p)
@@ -33,94 +44,265 @@ struct GetParameterIndex{I} <: AbstractParameterGetIndexer
     idx::I
 end
 
+is_indexer_timeseries(::Type{GetParameterIndex{I}}) where {I} = IndexerNotTimeseries()
+function is_indexer_timeseries(::Type{GetParameterIndex{I}}) where {I <:
+                                                                    ParameterTimeseriesIndex}
+    IndexerTimeseries()
+end
+function indexer_timeseries_index(gpi::GetParameterIndex{<:ParameterTimeseriesIndex})
+    gpi.idx.timeseries_idx
+end
 function (gpi::GetParameterIndex)(::IsTimeseriesTrait, prob)
     parameter_values(prob, gpi.idx)
 end
-function (gpi::GetParameterIndex)(::Timeseries, prob, i::Union{Int, CartesianIndex})
-    parameter_values(
-        parameter_values_at_time(
-            prob, only(to_indices(parameter_timeseries(prob), (i,)))),
-        gpi.idx)
+function (gpi::GetParameterIndex)(::Timeseries, prob, args)
+    throw(ParameterTimeseriesValueIndexMismatchError{Timeseries}(prob, gpi, args))
 end
-function (gpi::GetParameterIndex)(::Timeseries, prob, i::Colon)
-    parameter_values.(
-        parameter_values_at_time.((prob,),
-            only(to_indices(parameter_timeseries(prob), (i,)))),
-        (gpi.idx,))
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(ts::Timeseries, prob)
+    gpi.((ts,), (prob,),
+        eachindex(parameter_timeseries(prob, indexer_timeseries_index(gpi))))
 end
-function (gpi::GetParameterIndex)(::Timeseries, prob, i::AbstractArray{Bool})
-    parameter_values.(
-        map(Base.Fix1(parameter_values_at_time, prob),
-            only(to_indices(parameter_timeseries(prob), (i,)))),
-        (gpi.idx,))
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(
+        buffer::AbstractArray, ts::Timeseries, prob)
+    for (buf_idx, ts_idx) in zip(eachindex(buffer),
+        eachindex(parameter_timeseries(prob, indexer_timeseries_index(gpi))))
+        buffer[buf_idx] = gpi(ts, prob, ts_idx)
+    end
+    return buffer
 end
-function (gpi::GetParameterIndex)(::Timeseries, prob, i)
-    parameter_values.(parameter_values_at_time.((prob,), i), (gpi.idx,))
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(
+        ::Timeseries, prob, i::Union{Int, CartesianIndex})
+    parameter_values(prob, gpi.idx, i)
+end
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(ts::Timeseries, prob, ::Colon)
+    gpi(ts, prob)
+end
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(
+        buffer::AbstractArray, ts::Timeseries, prob, ::Colon)
+    gpi(buffer, ts, prob)
+end
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(
+        ts::Timeseries, prob, i::AbstractArray{Bool})
+    map(only(to_indices(
+        parameter_timeseries(prob, indexer_timeseries_index(gpi)), (i,)))) do idx
+        gpi(ts, prob, idx)
+    end
+end
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(
+        buffer::AbstractArray, ts::Timeseries, prob, i::AbstractArray{Bool})
+    for (buf_idx, ts_idx) in zip(eachindex(buffer),
+        only(to_indices(parameter_timeseries(prob, indexer_timeseries_index(gpi)), (i,))))
+        buffer[buf_idx] = gpi(ts, prob, ts_idx)
+    end
+    return buffer
+end
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(ts::Timeseries, prob, i)
+    gpi.((ts,), (prob,), i)
+end
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(
+        buffer::AbstractArray, ts::Timeseries, prob, i)
+    for (buf_idx, subidx) in zip(eachindex(buffer), i)
+        buffer[buf_idx] = gpi(ts, prob, subidx)
+    end
+    return buffer
+end
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(::NotTimeseries, prob)
+    throw(ParameterTimeseriesValueIndexMismatchError{NotTimeseries}(prob, gpi))
+end
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(
+        ::AbstractArray, ::NotTimeseries, prob)
+    throw(ParameterTimeseriesValueIndexMismatchError{NotTimeseries}(prob, gpi))
 end
 
 function _getp(sys, ::NotSymbolic, ::NotSymbolic, p)
     return GetParameterIndex(p)
 end
 
+struct GetParameterTimeseriesIndex{
+    I <: GetParameterIndex, J <: GetParameterIndex{<:ParameterTimeseriesIndex}} <:
+       AbstractParameterGetIndexer
+    param_idx::I
+    param_timeseries_idx::J
+end
+
+is_indexer_timeseries(::Type{G}) where {G <: GetParameterTimeseriesIndex} = IndexerBoth()
+function indexer_timeseries_index(gpti::GetParameterTimeseriesIndex)
+    indexer_timeseries_index(gpti.param_timeseries_idx)
+end
+as_not_timeseries_indexer(::IndexerBoth, gpti::GetParameterTimeseriesIndex) = gpti.param_idx
+function as_timeseries_indexer(::IndexerBoth, gpti::GetParameterTimeseriesIndex)
+    gpti.param_timeseries_idx
+end
+
+function (gpti::GetParameterTimeseriesIndex)(ts::Timeseries, prob, args...)
+    gpti.param_timeseries_idx(ts, prob, args...)
+end
+function (gpti::GetParameterTimeseriesIndex)(
+        buffer::AbstractArray, ts::Timeseries, prob, args...)
+    gpti.param_timeseries_idx(buffer, ts, prob, args...)
+end
+function (gpti::GetParameterTimeseriesIndex)(ts::NotTimeseries, prob)
+    gpti.param_idx(ts, prob)
+end
+
 function _getp(sys, ::ScalarSymbolic, ::SymbolicTypeTrait, p)
     idx = parameter_index(sys, p)
-    return invoke(_getp, Tuple{Any, NotSymbolic, NotSymbolic, Any},
-        sys, NotSymbolic(), NotSymbolic(), idx)
+    if is_timeseries_parameter(sys, p)
+        ts_idx = timeseries_parameter_index(sys, p)
+        return GetParameterTimeseriesIndex(
+            GetParameterIndex(idx), GetParameterIndex(ts_idx))
+    else
+        return GetParameterIndex(idx)
+    end
 end
 
-struct MultipleParameterGetters{G} <: AbstractGetIndexer
+struct MixedTimeseriesIndexes
+    indexes::Any
+end
+
+struct MultipleParametersGetter{T <: IsIndexerTimeseries, G, I} <:
+       AbstractParameterGetIndexer
     getters::G
-end
+    timeseries_idx::I
 
-function (mpg::MultipleParameterGetters)(::IsTimeseriesTrait, prob)
-    map(CallWith(prob), mpg.getters)
-end
-function (mpg::MultipleParameterGetters)(::Timeseries, prob, i::Union{Int, CartesianIndex})
-    map(CallWith(prob, i), mpg.getters)
-end
-function (mpg::MultipleParameterGetters)(::Timeseries, prob, i)
-    map.(CallWith.((prob,), only(to_indices(parameter_timeseries(prob), (i,)))),
-        (mpg.getters,))
-end
-function (mpg::MultipleParameterGetters)(::Timeseries, prob, i::AbstractArray{Bool})
-    callers = map(
-        Base.Fix1(CallWith, prob), only(to_indices(parameter_timeseries(prob), (i,))))
-    map.(callers, (mpg.getters,))
-end
-function (mpg::MultipleParameterGetters)(buffer::AbstractArray, ::Timeseries, prob)
-    for (g, bufi) in zip(mpg.getters, eachindex(buffer))
-        buffer[bufi] = g(prob)
-    end
-    buffer
-end
-function (mpg::MultipleParameterGetters)(
-        buffer::AbstractArray, ::Timeseries, prob, i::Union{Int, CartesianIndex})
-    for (g, bufi) in zip(mpg.getters, eachindex(buffer))
-        buffer[bufi] = g(prob, i)
-    end
-    buffer
-end
-function (mpg::MultipleParameterGetters)(buffer::AbstractArray, ::Timeseries, prob, i)
-    for (bufi, tsi) in zip(
-        eachindex(buffer), only(to_indices(parameter_timeseries(prob), (i,))))
-        for (g, bufj) in zip(mpg.getters, eachindex(buffer[bufi]))
-            buffer[bufi][bufj] = g(prob, tsi)
+    function MultipleParametersGetter(getters)
+        has_timeseries_indexers = any(getters) do g
+            is_indexer_timeseries(g) == IndexerTimeseries()
         end
+        has_non_timeseries_indexers = any(getters) do g
+            is_indexer_timeseries(g) == IndexerNotTimeseries()
+        end
+        if has_timeseries_indexers && has_non_timeseries_indexers
+            throw(ArgumentError("Cannot mix timeseries and non-timeseries indexers in `$MultipleParametersGetter`"))
+        end
+        indexer_type = if has_timeseries_indexers
+            getters = as_timeseries_indexer.(getters)
+            timeseries_idx = indexer_timeseries_index(first(getters))
+            IndexerTimeseries
+        elseif has_non_timeseries_indexers
+            getters = as_not_timeseries_indexer.(getters)
+            timeseries_idx = nothing
+            IndexerNotTimeseries
+        else
+            timeseries_idx = indexer_timeseries_index(first(getters))
+            IndexerBoth
+        end
+
+        if indexer_type != IndexerNotTimeseries &&
+           !allequal(indexer_timeseries_index(g) for g in getters)
+            if indexer_type == IndexerTimeseries
+                throw(ArgumentError("All parameters must belong to the same timeseries"))
+            else
+                indexer_type = IndexerNotTimeseries
+                timeseries_idx = MixedTimeseriesIndexes(indexer_timeseries_index.(getters))
+                getters = as_not_timeseries_indexer.(getters)
+            end
+        end
+
+        return new{indexer_type, typeof(getters), typeof(timeseries_idx)}(
+            getters, timeseries_idx)
     end
-    buffer
-end
-function (mpg::MultipleParameterGetters)(buffer::AbstractArray, ::NotTimeseries, prob)
-    for (g, bufi) in zip(mpg.getters, eachindex(buffer))
-        buffer[bufi] = g(prob)
-    end
-    buffer
 end
 
-function (mpg::MultipleParameterGetters)(buffer::AbstractArray, prob, i...)
-    mpg(buffer, is_parameter_timeseries(prob), prob, i...)
+const AtLeastTimeseriesMPG = Union{
+    MultipleParametersGetter{IndexerTimeseries}, MultipleParametersGetter{IndexerBoth}}
+const MixedTimeseriesIndexMPG = MultipleParametersGetter{
+    IndexerNotTimeseries, G, MixedTimeseriesIndexes} where {G}
+
+is_indexer_timeseries(::Type{<:MultipleParametersGetter{T}}) where {T} = T()
+function indexer_timeseries_index(mpg::MultipleParametersGetter)
+    mpg.timeseries_idx
 end
-function (mpg::MultipleParameterGetters)(prob, i...)
-    mpg(is_parameter_timeseries(prob), prob, i...)
+function as_not_timeseries_indexer(::IndexerBoth, mpg::MultipleParametersGetter)
+    MultipleParametersGetter(as_not_timeseries_indexer.(mpg.getters))
+end
+
+function as_timeseries_indexer(::IndexerBoth, mpg::MultipleParametersGetter)
+    MultipleParametersGetter(as_timeseries_indexer.(mpg.getters))
+end
+
+for (indexerTimeseriesType, timeseriesType) in [
+    (IndexerNotTimeseries, IsTimeseriesTrait),
+    (IndexerBoth, NotTimeseries)
+]
+    @eval function (mpg::MultipleParametersGetter{$indexerTimeseriesType})(
+            ::$timeseriesType, prob)
+        CallWith(prob).(mpg.getters)
+    end
+    @eval function (mpg::MultipleParametersGetter{$indexerTimeseriesType})(
+            buffer::AbstractArray, ::$timeseriesType, prob)
+        for (buf_idx, getter) in zip(eachindex(buffer), mpg.getters)
+            buffer[buf_idx] = getter(prob)
+        end
+        return buffer
+    end
+end
+
+function (mpg::MixedTimeseriesIndexMPG)(::Timeseries, prob, args...)
+    throw(MixedParameterTimeseriesIndexError(prob, mpg.timeseries_idx.indexes))
+end
+
+function (mpg::MultipleParametersGetter{IndexerNotTimeseries})(::Timeseries, prob, args)
+    throw(ParameterTimeseriesValueIndexMismatchError{Timeseries}(prob, mpg, args))
+end
+function (mpg::MultipleParametersGetter{IndexerNotTimeseries})(
+        ::AbstractArray, ::Timeseries, prob, args)
+    throw(ParameterTimeseriesValueIndexMismatchError{Timeseries}(prob, mpg, args))
+end
+function (mpg::AtLeastTimeseriesMPG)(ts::Timeseries, prob)
+    map(eachindex(parameter_timeseries(prob, indexer_timeseries_index(mpg)))) do i
+        mpg(ts, prob, i)
+    end
+end
+function (mpg::AtLeastTimeseriesMPG)(::Timeseries, prob, i::Union{Int, CartesianIndex})
+    CallWith(prob, i).(mpg.getters)
+end
+function (mpg::AtLeastTimeseriesMPG)(ts::Timeseries, prob, ::Colon)
+    mpg(ts, prob)
+end
+function (mpg::AtLeastTimeseriesMPG)(ts::Timeseries, prob, i::AbstractArray{Bool})
+    map(only(to_indices(
+        parameter_timeseries(prob, indexer_timeseries_index(mpg)), (i,)))) do idx
+        mpg(ts, prob, idx)
+    end
+end
+function (mpg::AtLeastTimeseriesMPG)(ts::Timeseries, prob, i)
+    mpg.((ts,), (prob,), i)
+end
+function (mpg::AtLeastTimeseriesMPG)(buffer::AbstractArray, ts::Timeseries, prob)
+    for (buf_idx, ts_idx) in zip(eachindex(buffer),
+        eachindex(parameter_timeseries(prob, indexer_timeseries_index(mpg))))
+        mpg(buffer[buf_idx], ts, prob, ts_idx)
+    end
+    return buffer
+end
+function (mpg::AtLeastTimeseriesMPG)(
+        buffer::AbstractArray, ::Timeseries, prob, i::Union{Int, CartesianIndex})
+    for (buf_idx, getter) in zip(eachindex(buffer), mpg.getters)
+        buffer[buf_idx] = getter(prob, i)
+    end
+    return buffer
+end
+function (mpg::AtLeastTimeseriesMPG)(buffer::AbstractArray, ts::Timeseries, prob, ::Colon)
+    mpg(buffer, ts, prob)
+end
+function (mpg::AtLeastTimeseriesMPG)(
+        buffer::AbstractArray, ts::Timeseries, prob, i::AbstractArray{Bool})
+    mpg(buffer, ts, prob,
+        only(to_indices(parameter_timeseries(prob, indexer_timeseries_index(mpg)), (i,))))
+end
+function (mpg::AtLeastTimeseriesMPG)(buffer::AbstractArray, ts::Timeseries, prob, i)
+    for (buf_idx, ts_idx) in zip(eachindex(buffer), i)
+        mpg(buffer[buf_idx], ts, prob, ts_idx)
+    end
+    return buffer
+end
+function (mpg::MultipleParametersGetter{IndexerTimeseries})(::NotTimeseries, prob)
+    throw(ParameterTimeseriesValueIndexMismatchError{NotTimeseries}(prob, mpg))
+end
+function (mpg::MultipleParametersGetter{IndexerTimeseries})(
+        ::AbstractArray, ::NotTimeseries, prob)
+    throw(ParameterTimeseriesValueIndexMismatchError{NotTimeseries}(prob, mpg))
 end
 
 for (t1, t2) in [
@@ -129,16 +311,19 @@ for (t1, t2) in [
     (NotSymbolic, Union{<:Tuple, <:AbstractArray})
 ]
     @eval function _getp(sys, ::NotSymbolic, ::$t1, p::$t2)
-        getters = getp.((sys,), p)
-        return MultipleParameterGetters(getters)
+        return MultipleParametersGetter(getp.((sys,), p))
     end
 end
 
 function _getp(sys, ::ArraySymbolic, ::SymbolicTypeTrait, p)
     if is_parameter(sys, p)
         idx = parameter_index(sys, p)
-        return invoke(_getp, Tuple{Any, NotSymbolic, NotSymbolic, Any},
-            sys, NotSymbolic(), NotSymbolic(), idx)
+        if is_timeseries_parameter(sys, p)
+            ts_idx = timeseries_parameter_index(sys, p)
+            return GetParameterTimeseriesIndex(idx, ts_idx)
+        else
+            return GetParameterIndex(idx)
+        end
     end
     return getp(sys, collect(p))
 end
@@ -151,7 +336,7 @@ end
 function (phw::ParameterHookWrapper)(prob, args...)
     res = phw.setter(prob, args...)
     finalize_parameters_hook!(prob, phw.original_index)
-    res
+    return res
 end
 
 """

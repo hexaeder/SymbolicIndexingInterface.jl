@@ -1,11 +1,6 @@
-state_values(arr::AbstractArray) = arr
-state_values(arr, i) = state_values(arr)[i]
-
 function set_state!(sys, val, idx)
     state_values(sys)[idx] = val
 end
-
-current_time(p, i) = current_time(p)[i]
 
 """
     getu(indp, sym)
@@ -25,6 +20,11 @@ support symbolic expressions, the value provider must implement [`observed`](@re
 
 This function typically does not need to be implemented, and has a default implementation
 relying on the above functions.
+
+If the value provider is a parameter timeseries object, the same rules apply as
+[`getp`](@ref). The difference here is that `sym` may also contain non-parameter symbols,
+and the values are always returned corresponding to the state timeseries. This utilizes
+[`parameter_values_at_state_time`](@ref) and [`parameter_timeseries_at_state_time`](@ref).
 """
 function getu(sys, sym)
     symtype = symbolic_type(sym)
@@ -38,8 +38,11 @@ end
 function (gsi::GetStateIndex)(::Timeseries, prob)
     getindex.(state_values(prob), (gsi.idx,))
 end
-function (gsi::GetStateIndex)(::Timeseries, prob, i)
+function (gsi::GetStateIndex)(::Timeseries, prob, i::Union{Int, CartesianIndex})
     getindex(state_values(prob, i), gsi.idx)
+end
+function (gsi::GetStateIndex)(::Timeseries, prob, i)
+    getindex.(state_values(prob, i), gsi.idx)
 end
 function (gsi::GetStateIndex)(::NotTimeseries, prob)
     state_values(prob, gsi.idx)
@@ -53,11 +56,49 @@ struct GetpAtStateTime{G} <: AbstractStateGetIndexer
     getter::G
 end
 
-function (g::GetpAtStateTime)(::Timeseries, prob)
-    g.getter.(parameter_values_at_state_time(prob))
+function (g::GetpAtStateTime)(ts::Timeseries, prob)
+    g(ts, is_parameter_timeseries(prob), prob)
 end
-function (g::GetpAtStateTime)(::Timeseries, prob, i)
-    g.getter(parameter_values_at_state_time(prob, i))
+function (g::GetpAtStateTime)(ts::Timeseries, prob, i)
+    g(ts, is_parameter_timeseries(prob), prob, i)
+end
+function (g::GetpAtStateTime)(::Timeseries, ::NotTimeseries, prob, _...)
+    g.getter(prob)
+end
+function (g::GetpAtStateTime)(ts::Timeseries, p_ts::Timeseries, prob)
+    g(ts, p_ts, is_indexer_timeseries(g.getter), prob)
+end
+function (g::GetpAtStateTime)(
+        ::Timeseries, ::Timeseries, ::Union{IndexerTimeseries, IndexerBoth}, prob)
+    g.getter.((prob,),
+        parameter_timeseries_at_state_time(prob, indexer_timeseries_index(g.getter)))
+end
+function (g::GetpAtStateTime)(::Timeseries, ::Timeseries, ::IndexerNotTimeseries, prob)
+    g.getter(prob)
+end
+function (g::GetpAtStateTime)(ts::Timeseries, p_ts::Timeseries, prob, i)
+    g(ts, p_ts, is_indexer_timeseries(g.getter), prob, i)
+end
+function (g::GetpAtStateTime)(
+        ::Timeseries, ::Timeseries, ::Union{IndexerTimeseries, IndexerBoth}, prob, i)
+    g.getter(prob,
+        parameter_timeseries_at_state_time(prob, indexer_timeseries_index(g.getter), i))
+end
+function (g::GetpAtStateTime)(::Timeseries, ::Timeseries, ::IndexerNotTimeseries,
+        prob, ::Union{Int, CartesianIndex})
+    g.getter(prob)
+end
+function (g::GetpAtStateTime)(
+        ::Timeseries, ::Timeseries, ::IndexerNotTimeseries, prob, ::Colon)
+    map(_ -> g.getter(prob), current_time(prob))
+end
+function (g::GetpAtStateTime)(
+        ::Timeseries, ::Timeseries, ::IndexerNotTimeseries, prob, i::AbstractArray{Bool})
+    num_ones = sum(i)
+    map(_ -> g.getter(prob), 1:num_ones)
+end
+function (g::GetpAtStateTime)(::Timeseries, ::Timeseries, ::IndexerNotTimeseries, prob, i)
+    map(_ -> g.getter(prob), 1:length(i))
 end
 function (g::GetpAtStateTime)(::NotTimeseries, prob)
     g.getter(prob)
@@ -72,15 +113,45 @@ struct TimeDependentObservedFunction{F} <: AbstractStateGetIndexer
     obsfn::F
 end
 
-function (o::TimeDependentObservedFunction)(::Timeseries, prob)
+function (o::TimeDependentObservedFunction)(ts::Timeseries, prob)
+    return o(ts, is_parameter_timeseries(prob), prob)
+end
+function (o::TimeDependentObservedFunction)(::Timeseries, ::Timeseries, prob)
     o.obsfn.(state_values(prob),
         parameter_values_at_state_time(prob),
         current_time(prob))
 end
-function (o::TimeDependentObservedFunction)(::Timeseries, prob, i)
+function (o::TimeDependentObservedFunction)(::Timeseries, ::NotTimeseries, prob)
+    o.obsfn.(state_values(prob),
+        (parameter_values(prob),),
+        current_time(prob))
+end
+function (o::TimeDependentObservedFunction)(ts::Timeseries, prob, i)
+    return o(ts, is_parameter_timeseries(prob), prob, i)
+end
+function (o::TimeDependentObservedFunction)(
+        ::Timeseries, ::Timeseries, prob, i::Union{Int, CartesianIndex})
     return o.obsfn(state_values(prob, i),
         parameter_values_at_state_time(prob, i),
         current_time(prob, i))
+end
+function (o::TimeDependentObservedFunction)(
+        ts::Timeseries, p_ts::IsTimeseriesTrait, prob, ::Colon)
+    return o(ts, p_ts, prob)
+end
+function (o::TimeDependentObservedFunction)(
+        ts::Timeseries, p_ts::IsTimeseriesTrait, prob, i::AbstractArray{Bool})
+    map(only(to_indices(current_time(prob), (i,)))) do idx
+        o(ts, p_ts, prob, idx)
+    end
+end
+function (o::TimeDependentObservedFunction)(
+        ts::Timeseries, p_ts::IsTimeseriesTrait, prob, i)
+    o.((ts,), (p_ts,), (prob,), i)
+end
+function (o::TimeDependentObservedFunction)(
+        ::Timeseries, ::NotTimeseries, prob, i::Union{Int, CartesianIndex})
+    o.obsfn(state_values(prob, i), parameter_values(prob), current_time(prob, i))
 end
 function (o::TimeDependentObservedFunction)(::NotTimeseries, prob)
     return o.obsfn(state_values(prob), parameter_values(prob), current_time(prob))
@@ -117,29 +188,50 @@ struct MultipleGetters{G} <: AbstractStateGetIndexer
     getters::G
 end
 
-function (mg::MultipleGetters)(::Timeseries, prob)
-    return broadcast(i -> map(g -> g(prob, i), mg.getters),
-        eachindex(state_values(prob)))
+function (mg::MultipleGetters)(ts::Timeseries, prob)
+    return mg.((ts,), (prob,), eachindex(current_time(prob)))
 end
-function (mg::MultipleGetters)(::Timeseries, prob, i)
-    return map(g -> g(prob, i), mg.getters)
+function (mg::MultipleGetters)(::Timeseries, prob, i::Union{Int, CartesianIndex})
+    return map(CallWith(prob, i), mg.getters)
+end
+function (mg::MultipleGetters)(ts::Timeseries, prob, ::Colon)
+    return mg(ts, prob)
+end
+function (mg::MultipleGetters)(ts::Timeseries, prob, i::AbstractArray{Bool})
+    return map(only(to_indices(current_time(prob), (i,)))) do idx
+        mg(ts, prob, idx)
+    end
+end
+function (mg::MultipleGetters)(ts::Timeseries, prob, i)
+    mg.((ts,), (prob,), i)
 end
 function (mg::MultipleGetters)(::NotTimeseries, prob)
     return map(g -> g(prob), mg.getters)
 end
 
-struct AsTupleWrapper{G} <: AbstractStateGetIndexer
+struct AsTupleWrapper{N, G} <: AbstractStateGetIndexer
     getter::G
 end
 
-function (atw::AsTupleWrapper)(::Timeseries, prob)
-    return Tuple.(atw.getter(prob))
+AsTupleWrapper{N}(getter::G) where {N, G} = AsTupleWrapper{N, G}(getter)
+
+wrap_tuple(::AsTupleWrapper{N}, val) where {N} = ntuple(i -> val[i], Val(N))
+
+function (atw::(AsTupleWrapper{N} where {N}))(::Timeseries, prob)
+    return wrap_tuple.((atw,), atw.getter(prob))
+    # return Tuple.(atw.getter(prob))
+end
+function (atw::AsTupleWrapper)(::Timeseries, prob, i::Union{Int, CartesianIndex})
+    return wrap_tuple(atw, atw.getter(prob, i))
+    # return Tuple(atw.getter(prob, i))
 end
 function (atw::AsTupleWrapper)(::Timeseries, prob, i)
-    return Tuple(atw.getter(prob, i))
+    return wrap_tuple.((atw,), atw.getter(prob, i))
+    # return Tuple.(atw.getter(prob, i))
 end
 function (atw::AsTupleWrapper)(::NotTimeseries, prob)
-    return Tuple(atw.getter(prob))
+    wrap_tuple(atw, atw.getter(prob))
+    # return Tuple(atw.getter(prob))
 end
 
 for (t1, t2) in [
@@ -149,9 +241,14 @@ for (t1, t2) in [
 ]
     @eval function _getu(sys, ::NotSymbolic, ::$t1, sym::$t2)
         num_observed = count(x -> is_observed(sys, x), sym)
-        if num_observed <= 1
-            getters = getu.((sys,), sym)
-            return MultipleGetters(getters)
+        if num_observed == 0
+            if all(Base.Fix1(is_parameter, sys), sym) &&
+               all(!Base.Fix1(is_timeseries_parameter, sys), sym)
+                GetpAtStateTime(getp(sys, sym))
+            else
+                getters = getu.((sys,), sym)
+                return MultipleGetters(getters)
+            end
         else
             obs = observed(sys, sym isa Tuple ? collect(sym) : sym)
             getter = if is_time_dependent(sys)
@@ -160,7 +257,7 @@ for (t1, t2) in [
                 TimeIndependentObservedFunction(obs)
             end
             if sym isa Tuple
-                getter = AsTupleWrapper(getter)
+                getter = AsTupleWrapper{length(sym)}(getter)
             end
             return getter
         end
@@ -172,7 +269,7 @@ function _getu(sys, ::ArraySymbolic, ::SymbolicTypeTrait, sym)
         idx = variable_index(sys, sym)
         return getu(sys, idx)
     elseif is_parameter(sys, sym)
-        return getp(sys, sym)
+        return GetpAtStateTime(getp(sys, sym))
     end
     return getu(sys, collect(sym))
 end
