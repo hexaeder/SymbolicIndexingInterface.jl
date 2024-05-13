@@ -39,6 +39,9 @@ include("batched_interface.jl")
 export ProblemState
 include("problem_state.jl")
 
+export ParameterTimeseriesCollection
+include("parameter_timeseries_collection.jl")
+
 export ParameterIndexingProxy
 include("parameter_indexing_proxy.jl")
 
