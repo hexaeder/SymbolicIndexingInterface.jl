@@ -16,10 +16,10 @@ sc = SymbolCache(
 @test is_time_dependent(sc)
 @test constant_structure(sc)
 @test variable_symbols(sc) == [:x, :y, :z]
-@test parameter_symbols(sc) == [:a, :b]
+@test sort(parameter_symbols(sc)) == [:a, :b]
 @test independent_variable_symbols(sc) == [:t]
 @test all_variable_symbols(sc) == [:x, :y, :z]
-@test sort(all_symbols(sc)) == [:a, :b, :t, :x, :y, :z]
+@test sort(sort(all_symbols(sc))) == [:a, :b, :t, :x, :y, :z]
 @test default_values(sc)[:x] == 1
 @test default_values(sc)[:y] == :(2b)
 @test default_values(sc)[:b] == :(2a + x)
@@ -45,6 +45,16 @@ obsfn4 = observed(sc, [:(x + a) :(y + b); :(x + y) :(a + b)])
 obsfn5 = observed(sc, (:(x + a), :(y + b)))
 @test all(obsfn5(ones(3), 2ones(2), 3.0) .≈ (3.0, 3.0))
 
+@test_throws TypeError observed(sc, [:(x + a), 2])
+@test_throws TypeError observed(sc, (:(x + a), 2))
+
+@test_throws ArgumentError SymbolCache([:x, :y], [:a, :b], :t;
+    timeseries_parameters = Dict(:c => ParameterTimeseriesIndex(1, 1)))
+@test_throws TypeError SymbolCache(
+    [:x, :y], [:a, :c], :t; timeseries_parameters = Dict(:c => (1, 1)))
+@test_nowarn SymbolCache([:x, :y], [:a, :c], :t;
+    timeseries_parameters = Dict(:c => ParameterTimeseriesIndex(1, 1)))
+
 sc = SymbolCache([:x, :y], [:a, :b])
 @test !is_time_dependent(sc)
 @test sort(all_symbols(sc)) == [:a, :b, :x, :y]
@@ -53,6 +63,9 @@ obsfn = observed(sc, :(x + b))
 @test obsfn(ones(2), 2ones(2)) == 3.0
 # make sure the constructor works
 @test_nowarn SymbolCache([:x, :y])
+
+@test_throws ArgumentError SymbolCache(
+    [:x, :y], [:a, :b]; timeseries_parameters = Dict(:b => ParameterTimeseriesIndex(1, 1)))
 
 sc = SymbolCache()
 @test all(.!is_variable.((sc,), [:x, :y, :a, :b, :t]))
@@ -76,6 +89,10 @@ sc = SymbolCache(nothing, nothing, :t)
 @test all_variable_symbols(sc) == []
 @test all_symbols(sc) == [:t]
 @test isempty(default_values(sc))
+
+sc = SymbolCache(nothing, nothing, [:t1, :t2, :t3])
+@test all(is_independent_variable.((sc,), [:t1, :t2, :t3]))
+@test independent_variable_symbols(sc) == [:t1, :t2, :t3]
 
 sc2 = copy(sc)
 @test sc.variables == sc2.variables
