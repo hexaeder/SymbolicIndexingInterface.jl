@@ -217,21 +217,17 @@ AsTupleWrapper{N}(getter::G) where {N, G} = AsTupleWrapper{N, G}(getter)
 
 wrap_tuple(::AsTupleWrapper{N}, val) where {N} = ntuple(i -> val[i], Val(N))
 
-function (atw::(AsTupleWrapper{N} where {N}))(::Timeseries, prob)
+function (atw::AsTupleWrapper)(::Timeseries, prob)
     return wrap_tuple.((atw,), atw.getter(prob))
-    # return Tuple.(atw.getter(prob))
 end
 function (atw::AsTupleWrapper)(::Timeseries, prob, i::Union{Int, CartesianIndex})
     return wrap_tuple(atw, atw.getter(prob, i))
-    # return Tuple(atw.getter(prob, i))
 end
 function (atw::AsTupleWrapper)(::Timeseries, prob, i)
     return wrap_tuple.((atw,), atw.getter(prob, i))
-    # return Tuple.(atw.getter(prob, i))
 end
 function (atw::AsTupleWrapper)(::NotTimeseries, prob)
     wrap_tuple(atw, atw.getter(prob))
-    # return Tuple(atw.getter(prob))
 end
 
 for (t1, t2) in [

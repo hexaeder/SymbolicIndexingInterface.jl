@@ -98,6 +98,21 @@ function timeseries_parameter_index(indp, sym)
     end
 end
 
+struct ParameterObservedFunction{I, F <: Function}
+    timeseries_idx::I
+    observed_fn::F
+end
+
+"""
+    parameter_observed(indp, sym)
+
+Return the observed function of `sym` in `indp`. The returned function must have the
+signature `(p, t) -> [values...]` where `p` is the parameter object and `t` is the
+current time. If `!is_time_dependent(indp)` then the returned function must have the
+signature `(p) -> [values...]`.
+"""
+parameter_observed(indp, sym) = parameter_observed(symbolic_container(indp), sym)
+
 """
     parameter_symbols(indp)
 
@@ -133,7 +148,7 @@ is_observed(indp, sym) = is_observed(symbolic_container(indp), sym)
 
 Return the observed function of the given `sym` in `indp`. The returned function should
 have the signature `(u, p) -> [values...]` where `u` and `p` is the current state and
-parameter vector, respectively. If `istimedependent(indp) == true`, the function should
+parameter object, respectively. If `istimedependent(indp) == true`, the function should
 accept the current time `t` as its third parameter. If `constant_structure(indp) == false`,
 `observed` accepts a third parameter, which can either be a vector of symbols indicating
 the order of states or a time index, which identifies the order of states. This function

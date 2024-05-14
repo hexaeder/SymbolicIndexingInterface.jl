@@ -145,15 +145,165 @@ function (gpti::GetParameterTimeseriesIndex)(ts::NotTimeseries, prob)
     gpti.param_idx(ts, prob)
 end
 
-function _getp(sys, ::ScalarSymbolic, ::SymbolicTypeTrait, p)
-    idx = parameter_index(sys, p)
-    if is_timeseries_parameter(sys, p)
-        ts_idx = timeseries_parameter_index(sys, p)
-        return GetParameterTimeseriesIndex(
-            GetParameterIndex(idx), GetParameterIndex(ts_idx))
-    else
-        return GetParameterIndex(idx)
+struct GetParameterObserved{I, M, F <: Function} <: AbstractParameterGetIndexer
+    timeseries_idx::I
+    obsfn::F
+end
+
+function GetParameterObserved{Multiple}(timeseries_idx::I, obsfn::F) where {Multiple, I, F}
+    if !isa(Multiple, Bool)
+        throw(TypeError(:GetParameterObserved, "{Multiple}", Bool, Multiple))
     end
+    return GetParameterObserved{I, Multiple, F}(timeseries_idx, obsfn)
+end
+
+const MultipleGetParameterObserved = GetParameterObserved{I, true} where {I}
+const SingleGetParameterObserved = GetParameterObserved{I, false} where {I}
+
+function is_indexer_timeseries(::Type{G}) where {G <: GetParameterObserved{Nothing}}
+    IndexerNotTimeseries()
+end
+is_indexer_timeseries(::Type{G}) where {G <: GetParameterObserved} = IndexerBoth()
+indexer_timeseries_index(gpo::GetParameterObserved) = gpo.timeseries_idx
+function as_not_timeseries_indexer(
+        ::IndexerBoth, gpo::GetParameterObserved{I, M}) where {I, M}
+    return GetParameterObserved{M}(nothing, gpo.obsfn)
+end
+as_timeseries_indexer(::IndexerBoth, gpo::GetParameterObserved) = gpo
+
+function (gpo::GetParameterObserved{Nothing})(::Timeseries, prob)
+    gpo.obsfn(parameter_values(prob), current_time(prob)[end])
+end
+for multiple in [true, false]
+    @eval function (gpo::GetParameterObserved{Nothing, $multiple})(
+            buffer::AbstractArray, ::Timeseries, prob)
+        gpo.obsfn(buffer, parameter_values(prob), current_time(prob)[end])
+        return buffer
+    end
+end
+for argType in [Union{Int, CartesianIndex}, Colon, AbstractArray{Bool}, Any]
+    @eval function (gpo::GetParameterObserved{Nothing})(::Timeseries, prob, args::$argType)
+        throw(ParameterTimeseriesValueIndexMismatchError{Timeseries}(prob, gpo, args))
+    end
+    for multiple in [true, false]
+        @eval function (gpo::GetParameterObserved{Nothing, $multiple})(
+                ::AbstractArray, ::Timeseries, prob, args::$argType)
+            throw(ParameterTimeseriesValueIndexMismatchError{Timeseries}(prob, gpo, args))
+        end
+    end
+end
+function (gpo::GetParameterObserved)(::NotTimeseries, prob)
+    gpo.obsfn(parameter_values(prob), current_time(prob))
+end
+function (gpo::GetParameterObserved)(buffer::AbstractArray, ::NotTimeseries, prob)
+    gpo.obsfn(buffer, parameter_values(prob), current_time(prob))
+    return buffer
+end
+function (gpo::GetParameterObserved)(::Timeseries, prob)
+    times = parameter_timeseries(prob, gpo.timeseries_idx)
+    gpo.obsfn.(parameter_values_at_time.((prob,), times), times)
+end
+function (gpo::MultipleGetParameterObserved)(buffer::AbstractArray, ::Timeseries, prob)
+    times = parameter_timeseries(prob, gpo.timeseries_idx)
+    for (buf_idx, time) in zip(eachindex(buffer), times)
+        gpo.obsfn(buffer[buf_idx], parameter_values_at_time(prob, time), time)
+    end
+    return buffer
+end
+function (gpo::SingleGetParameterObserved)(buffer::AbstractArray, ::Timeseries, prob)
+    times = parameter_timeseries(prob, gpo.timeseries_idx)
+    for (buf_idx, time) in zip(eachindex(buffer), times)
+        buffer[buf_idx] = gpo.obsfn(parameter_values_at_time(prob, time), time)
+    end
+    return buffer
+end
+function (gpo::GetParameterObserved)(::Timeseries, prob, i::Union{Int, CartesianIndex})
+    time = parameter_timeseries(prob, gpo.timeseries_idx)[i]
+    gpo.obsfn(parameter_values_at_time(prob, time), time)
+end
+function (gpo::MultipleGetParameterObserved)(
+        buffer::AbstractArray, ::Timeseries, prob, i::Union{Int, CartesianIndex})
+    time = parameter_timeseries(prob, gpo.timeseries_idx)[i]
+    gpo.obsfn(buffer, parameter_values_at_time(prob, time), time)
+end
+function (gpo::GetParameterObserved)(ts::Timeseries, prob, ::Colon)
+    gpo(ts, prob)
+end
+for gpoType in [MultipleGetParameterObserved, SingleGetParameterObserved]
+    @eval function (gpo::$gpoType)(buffer::AbstractArray, ts::Timeseries, prob, ::Colon)
+        gpo(buffer, ts, prob)
+    end
+end
+function (gpo::GetParameterObserved)(ts::Timeseries, prob, i::AbstractArray{Bool})
+    map(only(to_indices(parameter_timeseries(prob, gpo.timeseries_idx), (i,)))) do idx
+        gpo(ts, prob, idx)
+    end
+end
+function (gpo::MultipleGetParameterObserved)(
+        buffer::AbstractArray, ts::Timeseries, prob, i::AbstractArray{Bool})
+    for (buf_idx, time_idx) in zip(eachindex(buffer),
+        only(to_indices(parameter_timeseries(prob, gpo.timeseries_idx), (i,))))
+        gpo(buffer[buf_idx], ts, prob, time_idx)
+    end
+    return buffer
+end
+function (gpo::SingleGetParameterObserved)(
+        buffer::AbstractArray, ts::Timeseries, prob, i::AbstractArray{Bool})
+    for (buf_idx, time_idx) in zip(eachindex(buffer),
+        only(to_indices(parameter_timeseries(prob, gpo.timeseries_idx), (i,))))
+        buffer[buf_idx] = gpo(ts, prob, time_idx)
+    end
+    return buffer
+end
+function (gpo::GetParameterObserved)(ts::Timeseries, prob, i)
+    gpo.((ts,), (prob,), i)
+end
+function (gpo::MultipleGetParameterObserved)(buffer::AbstractArray, ts::Timeseries, prob, i)
+    for (buf_idx, time_idx) in zip(eachindex(buffer), i)
+        gpo(buffer[buf_idx], ts, prob, time_idx)
+    end
+    return buffer
+end
+function (gpo::SingleGetParameterObserved)(buffer::AbstractArray, ts::Timeseries, prob, i)
+    for (buf_idx, time_idx) in zip(eachindex(buffer), i)
+        buffer[buf_idx] = gpo(ts, prob, time_idx)
+    end
+    return buffer
+end
+
+struct GetParameterObservedNoTime{F <: Function} <: AbstractParameterGetIndexer
+    obsfn::F
+end
+
+function is_indexer_timeseries(::Type{G}) where {G <: GetParameterObservedNoTime}
+    IndexerNotTimeseries()
+end
+
+function (gpo::GetParameterObservedNoTime)(::NotTimeseries, prob)
+    gpo.obsfn(parameter_values(prob))
+end
+function (gpo::GetParameterObservedNoTime)(buffer::AbstractArray, ::NotTimeseries, prob)
+    gpo.obsfn(buffer, parameter_values(prob))
+end
+
+function _getp(sys, ::ScalarSymbolic, ::SymbolicTypeTrait, p)
+    if is_parameter(sys, p)
+        idx = parameter_index(sys, p)
+        if is_timeseries_parameter(sys, p)
+            ts_idx = timeseries_parameter_index(sys, p)
+            return GetParameterTimeseriesIndex(
+                GetParameterIndex(idx), GetParameterIndex(ts_idx))
+        else
+            return GetParameterIndex(idx)
+        end
+    elseif is_observed(sys, p)
+        pofn = parameter_observed(sys, p)
+        if !is_time_dependent(sys)
+            return GetParameterObservedNoTime(pofn.observed_fn)
+        end
+        return GetParameterObserved{false}(pofn.timeseries_idx, pofn.observed_fn)
+    end
+    error("Invalid symbol $p for `getp`")
 end
 
 struct MixedTimeseriesIndexes
@@ -305,13 +455,73 @@ function (mpg::MultipleParametersGetter{IndexerTimeseries})(
     throw(ParameterTimeseriesValueIndexMismatchError{NotTimeseries}(prob, mpg))
 end
 
+struct AsParameterTupleWrapper{N, G <: AbstractParameterGetIndexer} <:
+       AbstractParameterGetIndexer
+    getter::G
+end
+
+AsParameterTupleWrapper{N}(getter::G) where {N, G} = AsParameterTupleWrapper{N, G}(getter)
+
+function is_indexer_timeseries(::Type{AsParameterTupleWrapper{N, G}}) where {N, G}
+    is_indexer_timeseries(G)
+end
+function indexer_timeseries_index(atw::AsParameterTupleWrapper)
+    indexer_timeseries_index(atw.getter)
+end
+function as_timeseries_indexer(::IndexerBoth, atw::AsParameterTupleWrapper{N}) where {N}
+    AsParameterTupleWrapper{N}(as_timeseries_indexer(atw.getter))
+end
+function as_not_timeseries_indexer(::IndexerBoth, atw::AsParameterTupleWrapper{N}) where {N}
+    AsParameterTupleWrapper{N}(as_not_timeseries_indexer(atw.getter))
+end
+
+wrap_tuple(::AsParameterTupleWrapper{N}, val) where {N} = ntuple(i -> val[i], Val(N))
+
+function (atw::AsParameterTupleWrapper)(ts::IsTimeseriesTrait, prob, args...)
+    atw(ts, is_indexer_timeseries(atw), prob, args...)
+end
+function (atw::AsParameterTupleWrapper)(ts::Timeseries, ::AtLeastTimeseriesIndexer, prob)
+    wrap_tuple.((atw,), atw.getter(ts, prob))
+end
+function (atw::AsParameterTupleWrapper)(
+        ts::Timeseries, ::AtLeastTimeseriesIndexer, prob, i::Union{Int, CartesianIndex})
+    wrap_tuple(atw, atw.getter(ts, prob, i))
+end
+function (atw::AsParameterTupleWrapper)(ts::Timeseries, ::AtLeastTimeseriesIndexer, prob, i)
+    wrap_tuple.((atw,), atw.getter(ts, prob, i))
+end
+# args is just so it throws
+function (atw::AsParameterTupleWrapper)(
+        ts::Timeseries, ::IndexerNotTimeseries, prob, args...)
+    wrap_tuple(atw, atw.getter(ts, prob, args...))
+end
+function (atw::AsParameterTupleWrapper)(
+        ts::NotTimeseries, ::AtLeastNotTimeseriesIndexer, prob, args...)
+    wrap_tuple(atw, atw.getter(ts, prob, args...))
+end
+function (atw::AsParameterTupleWrapper)(
+        buffer::AbstractArray, ts::IsTimeseriesTrait, prob, args...)
+    atw.getter(buffer, ts, prob, args...)
+end
+
 for (t1, t2) in [
     (ArraySymbolic, Any),
     (ScalarSymbolic, Any),
     (NotSymbolic, Union{<:Tuple, <:AbstractArray})
 ]
     @eval function _getp(sys, ::NotSymbolic, ::$t1, p::$t2)
-        return MultipleParametersGetter(getp.((sys,), p))
+        num_observed = count(x -> is_observed(sys, x), p)
+        if num_observed == 0
+            return MultipleParametersGetter(getp.((sys,), p))
+        else
+            pofn = parameter_observed(sys, p isa Tuple ? collect(p) : p)
+            if is_time_dependent(sys)
+                getter = GetParameterObserved{true}(pofn.timeseries_idx, pofn.observed_fn)
+            else
+                getter = GetParameterObservedNoTime(pofn.observed_fn)
+            end
+            return p isa Tuple ? AsParameterTupleWrapper{length(p)}(getter) : getter
+        end
     end
 end
 

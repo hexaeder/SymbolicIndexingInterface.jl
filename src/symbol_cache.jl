@@ -123,12 +123,14 @@ is_observed(::SymbolCache, ::Expr) = true
 is_observed(::SymbolCache, ::AbstractArray{Expr}) = true
 is_observed(::SymbolCache, ::Tuple{Vararg{Expr}}) = true
 
+# TODO: Make this less hacky
 struct ExpressionSearcher
+    parameters::Set{Symbol}
     declared::Set{Symbol}
     fnbody::Expr
 end
 
-ExpressionSearcher() = ExpressionSearcher(Set{Symbol}(), Expr(:block))
+ExpressionSearcher() = ExpressionSearcher(Set{Symbol}(), Set{Symbol}(), Expr(:block))
 
 function (exs::ExpressionSearcher)(sys, expr::Expr)
     for arg in expr.args
@@ -145,6 +147,7 @@ function (exs::ExpressionSearcher)(sys, sym::Symbol)
         push!(exs.fnbody.args, :($sym = u[$idx]))
     elseif is_parameter(sys, sym)
         idx = parameter_index(sys, sym)
+        push!(exs.parameters, sym)
         push!(exs.fnbody.args, :($sym = p[$idx]))
     elseif is_independent_variable(sys, sym)
         push!(exs.fnbody.args, :($sym = t))
@@ -175,21 +178,104 @@ function observed(sc::SymbolCache, expr::Expr)
         end
     end
 end
-function observed(sc::SymbolCache, exprs::AbstractArray)
-    for expr in exprs
-        if !(expr isa Union{Symbol, Expr})
-            throw(TypeError(:observed, "SymbolCache", Union{Symbol, Expr}, expr))
+
+to_expr(exprs::AbstractArray) = :(reshape([$(exprs...)], $(size(exprs))))
+to_expr(exprs::Tuple) = :(($(exprs...),))
+
+function inplace_observed(sc::SymbolCache, exprs::Union{AbstractArray, Tuple})
+    let cache = Dict{Expr, Function}()
+        return get!(cache, to_expr(exprs)) do
+            exs = ExpressionSearcher()
+            for expr in exprs
+                exs(sc, expr)
+            end
+            update_expr = Expr(:block)
+            for (i, expr) in enumerate(exprs)
+                push!(update_expr.args, :(buffer[$i] = $expr))
+            end
+            fnexpr = if is_time_dependent(sc)
+                :(function (buffer, u, p, t)
+                    $(exs.fnbody)
+                    $update_expr
+                    return buffer
+                end)
+            else
+                :(function (buffer, u, p)
+                    $(exs.fnbody)
+                    $update_expr
+                    return buffer
+                end)
+            end
+            return RuntimeGeneratedFunctions.@RuntimeGeneratedFunction(fnexpr)
         end
     end
-    return observed(sc, :(reshape([$(exprs...)], $(size(exprs)))))
 end
-function observed(sc::SymbolCache, exprs::Tuple)
+
+function observed(sc::SymbolCache, exprs::Union{AbstractArray, Tuple})
     for expr in exprs
         if !(expr isa Union{Symbol, Expr})
             throw(TypeError(:observed, "SymbolCache", Union{Symbol, Expr}, expr))
         end
     end
-    return observed(sc, :(($(exprs...),)))
+    return observed(sc, to_expr(exprs))
+end
+
+function parameter_observed(sc::SymbolCache, expr::Expr)
+    if is_time_dependent(sc)
+        exs = ExpressionSearcher()
+        exs(sc, expr)
+        ts_idxs = Set()
+        for p in exs.parameters
+            is_timeseries_parameter(sc, p) || continue
+            push!(ts_idxs, timeseries_parameter_index(sc, p).timeseries_idx)
+        end
+        f = let fn = observed(sc, expr)
+            f1(p, t) = fn(nothing, p, t)
+        end
+        if length(ts_idxs) == 1
+            return ParameterObservedFunction(only(ts_idxs), f)
+        else
+            return ParameterObservedFunction(nothing, f)
+        end
+    else
+        f = let fn = observed(sc, expr)
+            f2(p) = fn(nothing, p)
+        end
+        return ParameterObservedFunction(nothing, f)
+    end
+end
+
+function parameter_observed(sc::SymbolCache, exprs::Union{AbstractArray, Tuple})
+    for ex in exprs
+        if !(ex isa Union{Symbol, Expr})
+            throw(TypeError(:parameter_observed, "SymbolCache", Union{Symbol, Expr}, ex))
+        end
+    end
+    if is_time_dependent(sc)
+        exs = ExpressionSearcher()
+        exs(sc, to_expr(exprs))
+        ts_idxs = Set()
+        for p in exs.parameters
+            is_timeseries_parameter(sc, p) || continue
+            push!(ts_idxs, timeseries_parameter_index(sc, p).timeseries_idx)
+        end
+
+        f = let oop = observed(sc, to_expr(exprs)), iip = inplace_observed(sc, exprs)
+            f1(p, t) = oop(nothing, p, t)
+            f1(buffer, p, t) = iip(buffer, nothing, p, t)
+        end
+        if length(ts_idxs) == 1
+            return ParameterObservedFunction(only(ts_idxs), f)
+        else
+            return ParameterObservedFunction(nothing, f)
+        end
+    else
+        f = let oop = observed(sc, to_expr(exprs)), iip = inplace_observed(sc, exprs)
+            f2(p) = oop(nothing, p)
+            f2(buffer, p) = iip(buffer, nothing, p)
+        end
+        return ParameterObservedFunction(nothing, f)
+    end
 end
 
 function is_time_dependent(sc::SymbolCache)

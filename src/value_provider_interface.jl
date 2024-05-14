@@ -31,6 +31,11 @@ parameter_values(arr::Tuple, i) = arr[i]
 parameter_values(prob, i) = parameter_values(parameter_values(prob), i)
 
 """
+    parameter_values_at_time(valp, t) # t is float
+"""
+function parameter_values_at_time end
+
+"""
     parameter_values_at_state_time(valp, i)
     parameter_values_at_state_time(valp)
 
@@ -39,9 +44,8 @@ index `i`. This is useful when parameter values change during the simulation (su
 through callbacks) and their values are saved. `i` is the time index in the timeseries
 formed by dependent variables.
 
-By default, this function returns `parameter_values(valp)` regardless of `i`, and only
-needs to be specialized for timeseries objects where parameter values are not constant at
-all times. The resultant object should be indexable using [`parameter_values`](@ref).
+By default, this function relies on [`parameter_values_at_time`](@ref) and
+[`current_time`](@ref) for a default implementation.
 
 The single-argument version of this function is a shorthand to return parameter values
 at each point in the state timeseries. This has a default implementation relying on
@@ -49,7 +53,10 @@ at each point in the state timeseries. This has a default implementation relying
 """
 function parameter_values_at_state_time end
 
-parameter_values_at_state_time(p, i) = parameter_values(p)
+function parameter_values_at_state_time(p, i)
+    state_time = current_time(p, i)
+    return parameter_values_at_time(p, state_time)
+end
 function parameter_values_at_state_time(p)
     parameter_values_at_state_time.((p,), eachindex(current_time(p)))
 end
@@ -59,8 +66,8 @@ end
 
 Return a vector of the time steps at which the parameter values in the parameter
 timeseries at index `i` are saved. This is only required for objects where
-`is_parameter_timeseries(valp) === Timeseries()`. It will not be called otherwise.
-It is assumed that the timeseries is sorted in increasing order.
+`is_parameter_timeseries(valp) === Timeseries()`. It will not be called otherwise. It is
+assumed that the timeseries is sorted in increasing order.
 
 See also: [`is_parameter_timeseries`](@ref).
 """
@@ -228,6 +235,9 @@ struct IndexerTimeseries <: IsIndexerTimeseries end
 struct IndexerNotTimeseries <: IsIndexerTimeseries end
 struct IndexerBoth <: IsIndexerTimeseries end
 
+const AtLeastTimeseriesIndexer = Union{IndexerTimeseries, IndexerBoth}
+const AtLeastNotTimeseriesIndexer = Union{IndexerNotTimeseries, IndexerBoth}
+
 is_indexer_timeseries(x) = is_indexer_timeseries(typeof(x))
 function indexer_timeseries_index end
 
@@ -235,7 +245,7 @@ as_not_timeseries_indexer(x) = as_not_timeseries_indexer(is_indexer_timeseries(x
 as_not_timeseries_indexer(::IndexerNotTimeseries, x) = x
 function as_not_timeseries_indexer(::IndexerTimeseries, x)
     error("""
-        Tried to convert an `$IndexerTimeseries` to an `$IndexerNotTimeseries`. This\
+        Tried to convert an `$IndexerTimeseries` to an `$IndexerNotTimeseries`. This \
         should never happen. Please file an issue with an MWE.
     """)
 end
@@ -244,7 +254,7 @@ as_timeseries_indexer(x) = as_timeseries_indexer(is_indexer_timeseries(x), x)
 as_timeseries_indexer(::IndexerTimeseries, x) = x
 function as_timeseries_indexer(::IndexerNotTimeseries, x)
     error("""
-        Tried to convert an `$IndexerNotTimeseries` to an `$IndexerTimeseries`. This\
+        Tried to convert an `$IndexerNotTimeseries` to an `$IndexerTimeseries`. This \
         should never happen. Please file an issue with an MWE.
     """)
 end

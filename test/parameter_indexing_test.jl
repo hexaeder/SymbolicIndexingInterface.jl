@@ -14,6 +14,7 @@ tp = (1.0, 2.0, 3.0)
 struct FakeIntegrator{S, P}
     sys::S
     p::P
+    t::Float64
     counter::Ref{Int}
 end
 
@@ -22,6 +23,7 @@ function Base.getproperty(fi::FakeIntegrator, s::Symbol)
 end
 SymbolicIndexingInterface.symbolic_container(fp::FakeIntegrator) = fp.sys
 SymbolicIndexingInterface.parameter_values(fp::FakeIntegrator) = fp.p
+SymbolicIndexingInterface.current_time(fp::FakeIntegrator) = fp.t
 function SymbolicIndexingInterface.finalize_parameters_hook!(fi::FakeIntegrator, p)
     fi.counter[] += 1
 end
@@ -37,11 +39,8 @@ for sys in [
     has_ts = sys.timeseries_parameters !== nothing
     for pType in [Vector, Tuple]
         p = [1.0, 2.0, 3.0, 4.0]
-        fi = FakeIntegrator(sys, pType(copy(p)), Ref(0))
+        fi = FakeIntegrator(sys, pType(copy(p)), 9.0, Ref(0))
         new_p = [4.0, 5.0, 6.0, 7.0]
-        for i in [7, CartesianIndex(5)]
-            @test parameter_values_at_state_time(fi, i) == parameter_values(fi)
-        end
         for (sym, oldval, newval, check_inference) in [
             (:a, p[1], new_p[1], true),
             (1, p[1], new_p[1], true),
@@ -109,13 +108,20 @@ for sys in [
         for (sym, val) in [
             ([:a, :b, :c, :d], p),
             ([:c, :a], p[[3, 1]]),
-            ((:b, :a), p[[2, 1]]),
-            ((1, :c), p[[1, 3]])
+            ((:b, :a), Tuple(p[[2, 1]])),
+            ((1, :c), Tuple(p[[1, 3]])),
+            (:(a + b + t), p[1] + p[2] + fi.t),
+            ([:(a + b + t), :c], [p[1] + p[2] + fi.t, p[3]]),
+            ((:(a + b + t), :c), (p[1] + p[2] + fi.t, p[3]))
         ]
-            buffer = zeros(length(sym))
             get = getp(sys, sym)
-            @inferred get(buffer, fi)
-            @test buffer == val
+            @inferred get(fi)
+            @test get(fi) == val
+            if sym isa Union{Array, Tuple}
+                buffer = zeros(length(sym))
+                @inferred get(buffer, fi)
+                @test buffer == collect(val)
+            end
         end
     end
 end
@@ -149,12 +155,11 @@ function SymbolicIndexingInterface.parameter_values(
         fs::FakeSolution, i::ParameterTimeseriesIndex, j)
     parameter_values(fs.p_ts, i, j)
 end
-function SymbolicIndexingInterface.parameter_values_at_state_time(fs::FakeSolution, t)
-    state_time = fs.t[t]
+function SymbolicIndexingInterface.parameter_values_at_time(fs::FakeSolution, t)
     p = copy(fs.p)
     for (i, p_idxs) in enumerate(fs.p_idxs)
         p_times = parameter_timeseries(fs, i)
-        p_timeseries_idx = searchsortedlast(p_times, state_time)
+        p_timeseries_idx = searchsortedlast(p_times, t)
         p[p_idxs] = fs.p_ts[i, p_timeseries_idx]
     end
     return p
@@ -207,7 +212,20 @@ for (sym, indexer_trait, timeseries_index, val, buffer, check_inference) in [
     ((bidx, :b), IndexerTimeseries, 1, tuple.(bval, bval), map(_ -> zeros(2), bval), true),
     ([bidx, bidx], IndexerTimeseries, 1, vcat.(bval, bval), map(_ -> zeros(2), bval), true),
     ((bidx, bidx), IndexerTimeseries, 1,
-        tuple.(bval, bval), map(_ -> zeros(2), bval), true)
+        tuple.(bval, bval), map(_ -> zeros(2), bval), true),
+    (:(a + b), IndexerBoth, 1, bval .+ aval, zeros(length(bval)), true),
+    ([:(a + b), :a], IndexerBoth, 1, vcat.(bval .+ aval, aval),
+        map(_ -> zeros(2), bval), true),
+    ((:(a + b), :a), IndexerBoth, 1, tuple.(bval .+ aval, aval),
+        map(_ -> zeros(2), bval), true),
+    ([:(a + b), :b], IndexerBoth, 1, vcat.(bval .+ aval, bval),
+        map(_ -> zeros(2), bval), true),
+    ((:(a + b), :b), IndexerBoth, 1, tuple.(bval .+ aval, bval),
+        map(_ -> zeros(2), bval), true),
+    ([:(a + b), :c], IndexerNotTimeseries, 0,
+        [aval + bval[end], cval[end]], zeros(2), true),
+    ((:(a + b), :c), IndexerNotTimeseries, 0,
+        (aval + bval[end], cval[end]), zeros(2), true)
 ]
     getter = getp(sys, sym)
     @test is_indexer_timeseries(getter) isa indexer_trait
@@ -365,5 +383,44 @@ for (sym, val_is_timeseries, val, check_inference) in [
             end
         end
         @test getter(fs, subidx) == target
+    end
+end
+
+@test_throws ErrorException getp(sys, :not_a_param)
+
+struct FakeNoTimeSolution
+    sys::SymbolCache
+    u::Vector{Float64}
+    p::Vector{Float64}
+end
+
+SymbolicIndexingInterface.state_values(fs::FakeNoTimeSolution) = fs.u
+SymbolicIndexingInterface.symbolic_container(fs::FakeNoTimeSolution) = fs.sys
+SymbolicIndexingInterface.parameter_values(fs::FakeNoTimeSolution) = fs.p
+SymbolicIndexingInterface.parameter_values(fs::FakeNoTimeSolution, i) = fs.p[i]
+
+sys = SymbolCache([:x, :y, :z], [:a, :b, :c])
+u = [1.0, 2.0, 3.0]
+p = [10.0, 20.0, 30.0]
+fs = FakeNoTimeSolution(sys, u, p)
+
+for (sym, val, check_inference) in [
+    (:a, p[1], true),
+    ([:a, :b], p[1:2], true),
+    ((:c, :b), (p[3], p[2]), true),
+    (:(a + b), p[1] + p[2], true),
+    ([:(a + b), :c], [p[1] + p[2], p[3]], true),
+    ((:(a + b), :c), (p[1] + p[2], p[3]), true)
+]
+    getter = getp(sys, sym)
+    if check_inference
+        @inferred getter(fs)
+    end
+    @test getter(fs) == val
+
+    if sym isa Union{Array, Tuple}
+        buffer = zeros(length(sym))
+        @inferred getter(buffer, fs)
+        @test buffer == collect(val)
     end
 end
