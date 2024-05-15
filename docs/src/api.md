@@ -30,6 +30,8 @@ allvariables
 
 ```@docs
 observed
+parameter_observed
+ParameterObservedFunction
 ```
 
 #### Parameter timeseries
@@ -81,6 +83,7 @@ correct functioning of [`getu`](@ref) and [`getp`](@ref).
 ```@docs
 is_parameter_timeseries
 parameter_timeseries
+parameter_values_at_time
 parameter_values_at_state_time
 parameter_timeseries_at_state_time
 ```
@@ -115,4 +118,5 @@ symbolic_evaluate
 ```@docs
 SymbolCache
 ProblemState
+ParameterTimeseriesCollection
 ```

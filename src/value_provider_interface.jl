@@ -31,7 +31,12 @@ parameter_values(arr::Tuple, i) = arr[i]
 parameter_values(prob, i) = parameter_values(parameter_values(prob), i)
 
 """
-    parameter_values_at_time(valp, t) # t is float
+    parameter_values_at_time(valp, t)
+
+Return an indexable collection containing the value of all parameters in `valp` at time
+`t`. Note that `t` here is a floating-point time, and not an index into a timeseries.
+
+This is useful for parameter timeseries objects, since some parameters change over time.
 """
 function parameter_values_at_time end
 
@@ -40,16 +45,14 @@ function parameter_values_at_time end
     parameter_values_at_state_time(valp)
 
 Return an indexable collection containing the value of all parameters in `valp` at time
-index `i`. This is useful when parameter values change during the simulation (such as
-through callbacks) and their values are saved. `i` is the time index in the timeseries
-formed by dependent variables.
+index `i` in the state timeseries.
 
 By default, this function relies on [`parameter_values_at_time`](@ref) and
 [`current_time`](@ref) for a default implementation.
 
 The single-argument version of this function is a shorthand to return parameter values
-at each point in the state timeseries. This has a default implementation relying on
-[`current_time`](@ref) and the two-argument version of this function.
+at each point in the state timeseries. This also has a default implementation relying on
+[`parameter_values_at_time`](@ref) and [`current_time`](@ref).
 """
 function parameter_values_at_state_time end
 
@@ -58,7 +61,7 @@ function parameter_values_at_state_time(p, i)
     return parameter_values_at_time(p, state_time)
 end
 function parameter_values_at_state_time(p)
-    parameter_values_at_state_time.((p,), eachindex(current_time(p)))
+    parameter_values_at_time.((p,), current_time(p))
 end
 
 """
