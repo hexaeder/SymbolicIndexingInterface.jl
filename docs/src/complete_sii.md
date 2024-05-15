@@ -379,7 +379,7 @@ We will also need a timeseries object which will store individual parameter time
 one manually here.
 
 ```@example param_timeseries
-struct MyDiffEqArrau
+struct MyDiffEqArray
   t::Vector{Float64}
   u::Vector{Vector{Float64}}
 end
@@ -416,7 +416,7 @@ sol = ExampleSolution2(
     sys,
     [i * ones(3) for i in 1:5], # u
     collect(0.0:0.25:1.0), # t
-    [4.2, b_c_timeseries.u[end]..., d_timeseries.u[end]...] # p must contain final values
+    [4.2, b_c_timeseries.u[end]..., d_timeseries.u[end]...], # p must contain final values
     [[2, 3], 4], # p_idxs
     ParameterTimeseriesCollection([b_c_timeseries, d_timeseries]) # p_ts
 )
