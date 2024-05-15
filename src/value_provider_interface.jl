@@ -5,19 +5,11 @@
 """
     parameter_values(valp)
     parameter_values(valp, i)
-    parameter_values(valp, i::ParameterTimeseriesIndex, j)
 
 Return an indexable collection containing the value of each parameter in `valp`. The two-
 argument version of this function returns the parameter value at index `i`. The
 two-argument version of this function will default to returning
 `parameter_values(valp)[i]`.
-
-For a parameter timeseries object, this should return the parameter values at the final
-time. The two-argument version for a parameter timeseries object should also access
-parameter values at the final time. An additional three-argument version is also
-necessary for parameter timeseries objects. It accepts a [`ParameterTimeseriesIndex`](@ref)
-object passed as `i`, the index in the corresponding timeseries `j` and returns the value
-of that parameter at the specified time index `j` in the appropriate parameter timeseries.
 
 If this function is called with an `AbstractArray` or `Tuple`, it will return the same
 array/tuple.
@@ -31,90 +23,22 @@ parameter_values(arr::Tuple, i) = arr[i]
 parameter_values(prob, i) = parameter_values(parameter_values(prob), i)
 
 """
-    parameter_values_at_time(valp, t)
+    get_parameter_timeseries_collection(valp)
 
-Return an indexable collection containing the value of all parameters in `valp` at time
-`t`. Note that `t` here is a floating-point time, and not an index into a timeseries.
-
-This is useful for parameter timeseries objects, since some parameters change over time.
+Return the [`ParameterTimeseriesCollection`](@ref) stored in `valp`. Only required for
+parameter timeseries objects.
 """
-function parameter_values_at_time end
+function get_parameter_timeseries_collection end
 
 """
-    parameter_values_at_state_time(valp, i)
-    parameter_values_at_state_time(valp)
+    with_updated_parameter_timeseries_values(valp, args::Pair...)
 
-Return an indexable collection containing the value of all parameters in `valp` at time
-index `i` in the state timeseries.
-
-By default, this function relies on [`parameter_values_at_time`](@ref) and
-[`current_time`](@ref) for a default implementation.
-
-The single-argument version of this function is a shorthand to return parameter values
-at each point in the state timeseries. This also has a default implementation relying on
-[`parameter_values_at_time`](@ref) and [`current_time`](@ref).
+Return an indexable collection containing the value of all parameters in `valp`, with
+parameters belonging to specific timeseries updated to different values. Each element in
+`args...` contains the timeseries index as the first value, and the saved parameter values
+in that partition. Not all parameter timeseries have to be updated using this method.
 """
-function parameter_values_at_state_time end
-
-function parameter_values_at_state_time(p, i)
-    state_time = current_time(p, i)
-    return parameter_values_at_time(p, state_time)
-end
-function parameter_values_at_state_time(p)
-    parameter_values_at_time.((p,), current_time(p))
-end
-
-"""
-    parameter_timeseries(valp, i)
-
-Return a vector of the time steps at which the parameter values in the parameter
-timeseries at index `i` are saved. This is only required for objects where
-`is_parameter_timeseries(valp) === Timeseries()`. It will not be called otherwise. It is
-assumed that the timeseries is sorted in increasing order.
-
-See also: [`is_parameter_timeseries`](@ref).
-"""
-function parameter_timeseries end
-
-"""
-    parameter_timeseries_at_state_time(valp, i, j)
-    parameter_timeseries_at_state_time(valp, i)
-
-Return the index of the timestep in the parameter timeseries at timeseries index `i` which
-occurs just before or at the same time as the state timestep with index `j`. The two-
-argument version of this function returns an iterable of indexes, one for each timestep in
-the state timeseries. If `j` is an object that refers to multiple values in the state
-timeseries (e.g. `Colon`), return an iterable of the indexes in the parameter timeseries
-at the appropriate points.
-
-Both versions of this function have default implementations relying on
-[`current_time`](@ref) and [`parameter_timeseries`](@ref), for the cases where `j` is one
-of: `Int`, `CartesianIndex`, `AbstractArray{Bool}`, `Colon` or an iterable of the
-aforementioned.
-"""
-function parameter_timeseries_at_state_time end
-
-function parameter_timeseries_at_state_time(valp, i, j::Union{Int, CartesianIndex})
-    state_time = current_time(valp, j)
-    timeseries = parameter_timeseries(valp, i)
-    searchsortedlast(timeseries, state_time)
-end
-
-function parameter_timeseries_at_state_time(valp, i, ::Colon)
-    parameter_timeseries_at_state_time(valp, i)
-end
-
-function parameter_timeseries_at_state_time(valp, i, j::AbstractArray{Bool})
-    parameter_timeseries_at_state_time(valp, i, only(to_indices(current_time(valp), (j,))))
-end
-
-function parameter_timeseries_at_state_time(valp, i, j)
-    (parameter_timeseries_at_state_time(valp, i, jj) for jj in j)
-end
-
-function parameter_timeseries_at_state_time(valp, i)
-    parameter_timeseries_at_state_time(valp, i, eachindex(current_time(valp)))
-end
+function with_updated_parameter_timeseries_values end
 
 """
     set_parameter!(valp, val, idx)

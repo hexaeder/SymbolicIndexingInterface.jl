@@ -9,13 +9,14 @@ SymbolicIndexingInterface.current_time(mda::MyDiffEqArray) = mda.t
 SymbolicIndexingInterface.state_values(mda::MyDiffEqArray) = mda.u
 SymbolicIndexingInterface.is_timeseries(::Type{MyDiffEqArray}) = Timeseries()
 
-@test_throws ArgumentError ParameterTimeseriesCollection((ones(3), 2ones(3)))
+ps = ones(3)
+@test_throws ArgumentError ParameterTimeseriesCollection((ones(3), 2ones(3)), ps)
 
 a_timeseries = MyDiffEqArray(collect(0:0.1:0.9), [[2.5i, sin(0.2i)] for i in 1:10])
 b_timeseries = MyDiffEqArray(collect(0:0.25:0.9), [[3.5i, log(1.3i)] for i in 1:4])
 c_timeseries = MyDiffEqArray(collect(0:0.17:0.90), [[4.3i] for i in 1:5])
 collection = (a_timeseries, b_timeseries, c_timeseries)
-ptc = ParameterTimeseriesCollection(collection)
+ptc = ParameterTimeseriesCollection(collection, ps)
 
 @test collect(eachindex(ptc)) == [1, 2, 3]
 @test [x for x in ptc] == [a_timeseries, b_timeseries, c_timeseries]

@@ -23,8 +23,7 @@ relying on the above functions.
 
 If the value provider is a parameter timeseries object, the same rules apply as
 [`getp`](@ref). The difference here is that `sym` may also contain non-parameter symbols,
-and the values are always returned corresponding to the state timeseries. This utilizes
-[`parameter_values_at_state_time`](@ref) and [`parameter_timeseries_at_state_time`](@ref).
+and the values are always returned corresponding to the state timeseries.
 """
 function getu(sys, sym)
     symtype = symbolic_type(sym)
@@ -117,9 +116,8 @@ function (o::TimeDependentObservedFunction)(ts::Timeseries, prob)
     return o(ts, is_parameter_timeseries(prob), prob)
 end
 function (o::TimeDependentObservedFunction)(::Timeseries, ::Timeseries, prob)
-    o.obsfn.(state_values(prob),
-        parameter_values_at_state_time(prob),
-        current_time(prob))
+    map(o.obsfn, state_values(prob),
+        parameter_values_at_state_time(prob), current_time(prob))
 end
 function (o::TimeDependentObservedFunction)(::Timeseries, ::NotTimeseries, prob)
     o.obsfn.(state_values(prob),

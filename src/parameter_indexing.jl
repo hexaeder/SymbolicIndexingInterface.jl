@@ -17,8 +17,9 @@ that implement `getindex`.
 
 If the returned function is used on a timeseries object which saves parameter timeseries,
 it can be used to index said timeseries. The timeseries object must implement
-[`parameter_timeseries`](@ref), [`parameter_values_at_state_time`](@ref),
-[`parameter_timeseries_at_state_time`](@ref) and [`is_parameter_timeseries`](@ref).
+[`is_parameter_timeseries`](@ref) and [`get_parameter_timeseries_collection`](@ref).
+Additionally, the parameter object must implement
+[`with_updated_parameter_timeseries_values`](@ref).
 
 If `sym` is a timeseries parameter, the function will return the timeseries of the
 parameter if the value provider is a parameter timeseries object. An additional argument
@@ -58,9 +59,8 @@ end
 function (gpi::GetParameterIndex)(::Timeseries, prob, args)
     throw(ParameterTimeseriesValueIndexMismatchError{Timeseries}(prob, gpi, args))
 end
-function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(ts::Timeseries, prob)
-    gpi.((ts,), (prob,),
-        eachindex(parameter_timeseries(prob, indexer_timeseries_index(gpi))))
+function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(::Timeseries, prob)
+    get_parameter_timeseries_collection(prob)[gpi.idx]
 end
 function (gpi::GetParameterIndex{<:ParameterTimeseriesIndex})(
         buffer::AbstractArray, ts::Timeseries, prob)
@@ -200,8 +200,9 @@ function (gpo::GetParameterObserved)(buffer::AbstractArray, ::NotTimeseries, pro
     return buffer
 end
 function (gpo::GetParameterObserved)(::Timeseries, prob)
-    times = parameter_timeseries(prob, gpo.timeseries_idx)
-    gpo.obsfn.(parameter_values_at_time.((prob,), times), times)
+    map(parameter_timeseries(prob, gpo.timeseries_idx)) do t
+        gpo.obsfn(parameter_values_at_time(prob, t), t)
+    end
 end
 function (gpo::MultipleGetParameterObserved)(buffer::AbstractArray, ::Timeseries, prob)
     times = parameter_timeseries(prob, gpo.timeseries_idx)
@@ -256,7 +257,10 @@ function (gpo::SingleGetParameterObserved)(
     return buffer
 end
 function (gpo::GetParameterObserved)(ts::Timeseries, prob, i)
-    gpo.((ts,), (prob,), i)
+    map(i) do idx
+        gpo(ts, prob, idx)
+    end
+    # gpo.((ts,), (prob,), i)
 end
 function (gpo::MultipleGetParameterObserved)(buffer::AbstractArray, ts::Timeseries, prob, i)
     for (buf_idx, time_idx) in zip(eachindex(buffer), i)

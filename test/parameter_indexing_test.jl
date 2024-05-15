@@ -134,13 +134,28 @@ SymbolicIndexingInterface.current_time(mda::MyDiffEqArray) = mda.t
 SymbolicIndexingInterface.state_values(mda::MyDiffEqArray) = mda.u
 SymbolicIndexingInterface.is_timeseries(::Type{MyDiffEqArray}) = Timeseries()
 
+struct MyParameterObject
+    p::Vector{Float64}
+    disc_idxs::Vector{Vector{Int}}
+end
+
+SymbolicIndexingInterface.parameter_values(mpo::MyParameterObject) = mpo.p
+function SymbolicIndexingInterface.with_updated_parameter_timeseries_values(
+        mpo::MyParameterObject, args::Pair...)
+    for (ts_idx, val) in args
+        mpo.p[mpo.disc_idxs[ts_idx]] = val
+    end
+    return mpo
+end
+
+Base.getindex(mpo::MyParameterObject, i) = mpo.p[i]
+
 struct FakeSolution
     sys::SymbolCache
     u::Vector{Vector{Float64}}
     t::Vector{Float64}
-    p::Vector{Float64}
-    p_idxs::Vector{Vector{Int}}
-    p_ts::ParameterTimeseriesCollection{Vector{MyDiffEqArray}}
+    p::MyParameterObject
+    p_ts::ParameterTimeseriesCollection{Vector{MyDiffEqArray}, MyParameterObject}
 end
 
 function Base.getproperty(fs::FakeSolution, s::Symbol)
@@ -151,22 +166,7 @@ SymbolicIndexingInterface.current_time(fs::FakeSolution) = fs.t
 SymbolicIndexingInterface.symbolic_container(fs::FakeSolution) = fs.sys
 SymbolicIndexingInterface.parameter_values(fs::FakeSolution) = fs.p
 SymbolicIndexingInterface.parameter_values(fs::FakeSolution, i) = fs.p[i]
-function SymbolicIndexingInterface.parameter_values(
-        fs::FakeSolution, i::ParameterTimeseriesIndex, j)
-    parameter_values(fs.p_ts, i, j)
-end
-function SymbolicIndexingInterface.parameter_values_at_time(fs::FakeSolution, t)
-    p = copy(fs.p)
-    for (i, p_idxs) in enumerate(fs.p_idxs)
-        p_times = parameter_timeseries(fs, i)
-        p_timeseries_idx = searchsortedlast(p_times, t)
-        p[p_idxs] = fs.p_ts[i, p_timeseries_idx]
-    end
-    return p
-end
-function SymbolicIndexingInterface.parameter_timeseries(fs::FakeSolution, idx)
-    parameter_timeseries(fs.p_ts, idx)
-end
+SymbolicIndexingInterface.get_parameter_timeseries_collection(fs::FakeSolution) = fs.p_ts
 SymbolicIndexingInterface.is_timeseries(::Type{FakeSolution}) = Timeseries()
 SymbolicIndexingInterface.is_parameter_timeseries(::Type{FakeSolution}) = Timeseries()
 sys = SymbolCache([:x, :y, :z],
@@ -176,13 +176,14 @@ sys = SymbolCache([:x, :y, :z],
         :b => ParameterTimeseriesIndex(1, 1), :c => ParameterTimeseriesIndex(2, 1)))
 b_timeseries = MyDiffEqArray(collect(0:0.1:0.9), [[2.5i] for i in 1:10])
 c_timeseries = MyDiffEqArray(collect(0:0.25:0.9), [[3.5i] for i in 1:4])
+p = MyParameterObject(
+    [20.0, b_timeseries.u[end][1], c_timeseries.u[end][1], 30.0], [[2], [3]])
 fs = FakeSolution(
     sys,
     [i * ones(3) for i in 1:5],
     [0.2i for i in 1:5],
-    [20.0, b_timeseries.u[end][1], c_timeseries.u[end][1], 30.0],
-    [[2], [3]],
-    ParameterTimeseriesCollection([b_timeseries, c_timeseries])
+    p,
+    ParameterTimeseriesCollection([b_timeseries, c_timeseries], deepcopy(p))
 )
 aval = fs.p[1]
 bval = getindex.(b_timeseries.u)
@@ -240,12 +241,14 @@ for (sym, indexer_trait, timeseries_index, val, buffer, check_inference) in [
                                 deepcopy(buffer[end])
         test_non_timeseries_inplace = non_timeseries_buffer isa AbstractArray
     end
+    isobs = sym isa Union{AbstractArray, Tuple} ? any(Base.Fix1(is_observed, sys), sym) :
+            is_observed(sys, sym)
     if check_inference
         @inferred getter(fs)
         if test_inplace
             @inferred getter(deepcopy(buffer), fs)
         end
-        if test_non_timeseries
+        if test_non_timeseries && !isobs
             @inferred getter(parameter_values(fs))
             if test_inplace && test_non_timeseries_inplace && test_non_timeseries_inplace
                 @inferred getter(deepcopy(non_timeseries_buffer), parameter_values(fs))
@@ -265,7 +268,7 @@ for (sym, indexer_trait, timeseries_index, val, buffer, check_inference) in [
         end
         @test tmp == target
     end
-    if test_non_timeseries
+    if test_non_timeseries && !isobs
         non_timeseries_val = indexer_trait == IndexerNotTimeseries ? val : val[end]
         @test getter(parameter_values(fs)) == non_timeseries_val
         if test_inplace && test_non_timeseries && test_non_timeseries_inplace
@@ -277,7 +280,7 @@ for (sym, indexer_trait, timeseries_index, val, buffer, check_inference) in [
             end
             @test non_timeseries_buffer == target
         end
-    else
+    elseif !isobs
         @test_throws ParameterTimeseriesValueIndexMismatchError{NotTimeseries} getter(parameter_values(fs))
         if test_inplace
             @test_throws ParameterTimeseriesValueIndexMismatchError{NotTimeseries} getter(

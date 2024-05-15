@@ -24,9 +24,12 @@ export SymbolCache
 include("symbol_cache.jl")
 
 export parameter_values, set_parameter!, finalize_parameters_hook!,
-       parameter_values_at_time, parameter_values_at_state_time, parameter_timeseries,
-       parameter_timeseries_at_state_time, state_values, set_state!, current_time
+       get_parameter_timeseries_collection, with_updated_parameter_timeseries_values,
+       state_values, set_state!, current_time
 include("value_provider_interface.jl")
+
+export ParameterTimeseriesCollection
+include("parameter_timeseries_collection.jl")
 
 export getp, setp
 include("parameter_indexing.jl")
@@ -39,9 +42,6 @@ include("batched_interface.jl")
 
 export ProblemState
 include("problem_state.jl")
-
-export ParameterTimeseriesCollection
-include("parameter_timeseries_collection.jl")
 
 export ParameterIndexingProxy
 include("parameter_indexing_proxy.jl")
