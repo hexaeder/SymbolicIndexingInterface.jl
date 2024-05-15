@@ -1,4 +1,5 @@
 using SymbolicIndexingInterface
+using SymbolicIndexingInterface: parameter_timeseries
 using Test
 
 struct MyDiffEqArray
