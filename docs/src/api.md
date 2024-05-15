@@ -80,12 +80,14 @@ If a solution object saves a timeseries of parameter values that are updated dur
 simulation (such as by callbacks), it must implement the following methods to ensure
 correct functioning of [`getu`](@ref) and [`getp`](@ref).
 
+Parameter timeseries support requires that the value provider store the different
+timeseries in a [`ParameterTimeseriesCollection`](@ref).
+
 ```@docs
 is_parameter_timeseries
-parameter_timeseries
-parameter_values_at_time
-parameter_values_at_state_time
-parameter_timeseries_at_state_time
+get_parameter_timeseries_collection
+ParameterTimeseriesCollection
+with_updated_parameter_timeseries_values
 ```
 
 ### Batched Queries and Updates
@@ -118,5 +120,4 @@ symbolic_evaluate
 ```@docs
 SymbolCache
 ProblemState
-ParameterTimeseriesCollection
 ```

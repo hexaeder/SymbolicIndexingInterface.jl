@@ -324,12 +324,28 @@ correct implementation of these functions and the indexing syntax they enable.
 ```@example param_timeseries
 using SymbolicIndexingInterface
 
+# First, we must implement a parameter object that knows where the parameters in
+# each parameter timeseries are stored
+struct MyParameterObject
+    p::Vector{Float64}
+    disc_idxs::Vector{Vector{Int}}
+end
+
+# To be able to access parameter values
+SymbolicIndexingInterface.parameter_values(mpo::MyParameterObject) = mpo.p
+# Update the parameter object with new values
+function SymbolicIndexingInterface.with_updated_parameter_timeseries_values(mpo::MyParameterObject, args::Pair...)
+    for (ts_idx, val) in args
+        mpo.p[mpo.disc_idxs[ts_idx]] = val
+    end
+    return mpo
+end
+
 struct ExampleSolution2
     sys::SymbolCache
     u::Vector{Vector{Float64}}
     t::Vector{Float64}
-    p::Vector{Float64} # the parameter object. Only some parameters are timeseries params
-    p_idxs::Vector{Vector{Int}}
+    p::MyParameterObject # the parameter object. Only some parameters are timeseries params
     p_ts::ParameterTimeseriesCollection
 end
 
@@ -344,30 +360,7 @@ SymbolicIndexingInterface.state_values(fs::ExampleSolution2) = fs.u
 SymbolicIndexingInterface.current_time(fs::ExampleSolution2) = fs.t
 # By default, `parameter_values` refers to the last value
 SymbolicIndexingInterface.parameter_values(fs::ExampleSolution2) = fs.p
-SymbolicIndexingInterface.parameter_values(fs::ExampleSolution2, i) = fs.p[i]
-function SymbolicIndexingInterface.parameter_values(fs::ExampleSolution2, i::ParameterTimeseriesIndex, j)
-  return fs.p_ts[i, j]
-end
-# Index into the parameter timeseries vector
-function SymbolicIndexingInterface.parameter_values_at_time(fs::ExampleSolution2, t)
-    newp = copy(fs.p)
-    # iterating over `ParameterTimeseriesCollection` iterates over the contained timeseries
-    # objects
-    for (idxs, timeseries) in zip(fs.p_idxs, fs.p_ts)
-      # find the index of the last point in time the parameter values were saved
-      # before the requested time `t`
-      index_in_timeseries = searchsortedlast(current_time(timeseries), t)
-      # obtain the required values
-      timeseries_values = state_values(timeseries, index_in_timeseries)
-      # update parameter vector
-      newp[idxs] = timeseries_values
-    end
-    return newp
-end
-function SymbolicIndexingInterface.parameter_timeseries(fs::ExampleSolution2, i)
-  # `ParameterTimeseriesCollection` implements this for us
-  return parameter_timeseries(fs.p_ts, i)
-end
+SymbolicIndexingInterface.get_parameter_timeseries_collection(fs::FakeSolution) = fs.p_ts
 # Mark the object as a timeseries object
 SymbolicIndexingInterface.is_timeseries(::Type{ExampleSolution2}) = Timeseries()
 # Mark the object as a parameter timeseries object
@@ -391,7 +384,9 @@ SymbolicIndexingInterface.state_values(a::MyDiffEqArray) = a.u
 ```
 
 Now we can create an example object and observe the new functionality. Note that
-`sol.ps[sym, args...]` is identical to `getp(sol, sym)(sol, args...)`.
+`sol.ps[sym, args...]` is identical to `getp(sol, sym)(sol, args...)`. In a real
+application, the solution object will be populated during the solve process. We manually
+construct the object here for demonstration.
 
 ```@example param_timeseries
 sys = SymbolCache(
@@ -412,12 +407,16 @@ d_timeseries = MyDiffEqArray(
   collect(0.0:0.2:1.0),
   [[0.17i] for i in 1:6]
 )
+p = MyParameterObject(
+  # parameter values at the final time
+  [4.2, b_c_timeseries.u[end]..., d_timeseries.u[end]...],
+  [[2, 3], 4]
+)
 sol = ExampleSolution2(
     sys,
     [i * ones(3) for i in 1:5], # u
     collect(0.0:0.25:1.0), # t
-    [4.2, b_c_timeseries.u[end]..., d_timeseries.u[end]...], # p must contain final values
-    [[2, 3], 4], # p_idxs
+    p,
     ParameterTimeseriesCollection([b_c_timeseries, d_timeseries]) # p_ts
 )
 sol.ps[:a] # returns the value of non-timeseries parameter
