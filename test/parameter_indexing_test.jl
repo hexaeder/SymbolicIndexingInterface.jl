@@ -361,10 +361,6 @@ for (sym, val_is_timeseries, val, check_inference) in [
     ((:x, :(2b), :(3c)), true, tuple.(xval, 2 .* bval_state, 3 .* cval_state), true)
 ]
     getter = getu(sys, sym)
-    if val isa DataType
-        @test_throws val getter(fs)
-        continue
-    end
     if check_inference
         @inferred getter(fs)
     end
