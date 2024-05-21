@@ -260,7 +260,6 @@ function (gpo::GetParameterObserved)(ts::Timeseries, prob, i)
     map(i) do idx
         gpo(ts, prob, idx)
     end
-    # gpo.((ts,), (prob,), i)
 end
 function (gpo::MultipleGetParameterObserved)(buffer::AbstractArray, ts::Timeseries, prob, i)
     for (buf_idx, time_idx) in zip(eachindex(buffer), i)
@@ -381,7 +380,7 @@ for (indexerTimeseriesType, timeseriesType) in [
 ]
     @eval function (mpg::MultipleParametersGetter{$indexerTimeseriesType})(
             ::$timeseriesType, prob)
-        CallWith(prob).(mpg.getters)
+        map(CallWith(prob), mpg.getters)
     end
     @eval function (mpg::MultipleParametersGetter{$indexerTimeseriesType})(
             buffer::AbstractArray, ::$timeseriesType, prob)
