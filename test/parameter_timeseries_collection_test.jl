@@ -23,6 +23,7 @@ ptc = ParameterTimeseriesCollection(collection, ps)
 @test [x for x in ptc] == [a_timeseries, b_timeseries, c_timeseries]
 @test length(ptc) == 3
 @test parent(ptc) === collection
+@test parameter_values(ptc) === ps
 
 for i in 1:3
     @test ptc[i] === collection[i]
