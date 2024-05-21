@@ -27,6 +27,7 @@ following `getindex` methods:
   third the index of the parameter in an element of the timeseries.
 
 The three-argument version of [`parameter_values`](@ref) is implemented for this type.
+The single-argument version of `parameter_values` returns the cached parameter object.
 [`parameter_timeseries`](@ref) is implemented for this type. This type does not implement
 any traits.
 """
@@ -56,18 +57,39 @@ Base.parent(ptc::ParameterTimeseriesCollection) = ptc.collection
 Base.getindex(ptc::ParameterTimeseriesCollection, idx) = ptc.collection[idx]
 function Base.getindex(ptc::ParameterTimeseriesCollection, idx::ParameterTimeseriesIndex)
     timeseries = ptc.collection[idx.timeseries_idx]
-    return getu(timeseries, idx.parameter_idx)(timeseries)
+    return getindex.(state_values(timeseries), (idx.parameter_idx,))
+end
+function Base.getindex(
+        ptc::ParameterTimeseriesCollection, idx::ParameterTimeseriesIndex, subidx::Union{
+            Int, CartesianIndex})
+    timeseries = ptc.collection[idx.timeseries_idx]
+    return state_values(timeseries, subidx)[idx.parameter_idx]
+end
+function Base.getindex(
+        ptc::ParameterTimeseriesCollection, idx::ParameterTimeseriesIndex, ::Colon)
+    return ptc[idx]
+end
+function Base.getindex(
+        ptc::ParameterTimeseriesCollection, idx::ParameterTimeseriesIndex, subidx::AbstractArray{Bool})
+    timeseries = ptc.collection[idx.timeseries_idx]
+    map(only(to_indices(current_time(timeseries), (subidx,)))) do i
+        state_values(timeseries, i)[idx.parameter_idx]
+    end
 end
 function Base.getindex(
         ptc::ParameterTimeseriesCollection, idx::ParameterTimeseriesIndex, subidx)
     timeseries = ptc.collection[idx.timeseries_idx]
-    return getu(timeseries, idx.parameter_idx)(timeseries, subidx)
+    getindex.(state_values.((timeseries,), subidx), idx.parameter_idx)
 end
 function Base.getindex(ptc::ParameterTimeseriesCollection, ts_idx, subidx)
     return state_values(ptc.collection[ts_idx], subidx)
 end
 function Base.getindex(ptc::ParameterTimeseriesCollection, ts_idx, subidx, param_idx)
     return ptc[ParameterTimeseriesIndex(ts_idx, param_idx), subidx]
+end
+
+function parameter_values(ptc::ParameterTimeseriesCollection)
+    return ptc.paramcache
 end
 
 function parameter_values(
