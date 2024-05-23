@@ -315,7 +315,7 @@ setp(integrator, :b)(integrator, 3.0) # functionally the same as above
 
 ## Parameter Timeseries
 
-If a solution object saves modified parameter values (such as through callbacks) during the
+If a solution object includes modified parameter values (such as through callbacks) during the
 simulation, it must implement several additional functions for correct functioning of
 [`getu`](@ref) and [`getp`](@ref). [`ParameterTimeseriesCollection`](@ref) helps in
 implementing parameter timeseries objects. The following mockup gives an example of

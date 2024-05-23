@@ -37,10 +37,10 @@ ParameterObservedFunction
 #### Parameter timeseries
 
 If the index provider contains parameters that change during the course of the simulation
-at discrete intervals, it must implement the following methods to ensure correct
+at discrete time points, it must implement the following methods to ensure correct
 functioning of [`getu`](@ref) and [`getp`](@ref) for value providers that save the parameter
 timeseries. Note that there can be multiple parameter timeseries, in case different parameters
-change at different times.
+may change at different times.
 
 ```@docs
 is_timeseries_parameter
