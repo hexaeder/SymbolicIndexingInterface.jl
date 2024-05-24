@@ -380,7 +380,7 @@ for (indexerTimeseriesType, timeseriesType) in [
 ]
     @eval function (mpg::MultipleParametersGetter{$indexerTimeseriesType})(
             ::$timeseriesType, prob)
-        map(CallWith(prob), mpg.getters)
+        return _call.(mpg.getters, (prob,))
     end
     @eval function (mpg::MultipleParametersGetter{$indexerTimeseriesType})(
             buffer::AbstractArray, ::$timeseriesType, prob)

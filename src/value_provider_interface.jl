@@ -197,6 +197,10 @@ function (cw::CallWith)(arg)
     arg(cw.args...)
 end
 
+function _call(f, args...)
+    return f(args...)
+end
+
 ###########
 # Errors
 ###########
