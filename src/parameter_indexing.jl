@@ -317,44 +317,44 @@ struct MultipleParametersGetter{T <: IsIndexerTimeseries, G, I} <:
        AbstractParameterGetIndexer
     getters::G
     timeseries_idx::I
+end
 
-    function MultipleParametersGetter(getters)
-        has_timeseries_indexers = any(getters) do g
-            is_indexer_timeseries(g) == IndexerTimeseries()
-        end
-        has_non_timeseries_indexers = any(getters) do g
-            is_indexer_timeseries(g) == IndexerNotTimeseries()
-        end
-        if has_timeseries_indexers && has_non_timeseries_indexers
-            throw(ArgumentError("Cannot mix timeseries and non-timeseries indexers in `$MultipleParametersGetter`"))
-        end
-        indexer_type = if has_timeseries_indexers
-            getters = as_timeseries_indexer.(getters)
-            timeseries_idx = indexer_timeseries_index(first(getters))
-            IndexerTimeseries
-        elseif has_non_timeseries_indexers
-            getters = as_not_timeseries_indexer.(getters)
-            timeseries_idx = nothing
-            IndexerNotTimeseries
-        else
-            timeseries_idx = indexer_timeseries_index(first(getters))
-            IndexerBoth
-        end
-
-        if indexer_type != IndexerNotTimeseries &&
-           !allequal(indexer_timeseries_index(g) for g in getters)
-            if indexer_type == IndexerTimeseries
-                throw(ArgumentError("All parameters must belong to the same timeseries"))
-            else
-                indexer_type = IndexerNotTimeseries
-                timeseries_idx = MixedTimeseriesIndexes(indexer_timeseries_index.(getters))
-                getters = as_not_timeseries_indexer.(getters)
-            end
-        end
-
-        return new{indexer_type, typeof(getters), typeof(timeseries_idx)}(
-            getters, timeseries_idx)
+function MultipleParametersGetter(getters)
+    has_timeseries_indexers = any(getters) do g
+        is_indexer_timeseries(g) == IndexerTimeseries()
     end
+    has_non_timeseries_indexers = any(getters) do g
+        is_indexer_timeseries(g) == IndexerNotTimeseries()
+    end
+    if has_timeseries_indexers && has_non_timeseries_indexers
+        throw(ArgumentError("Cannot mix timeseries and non-timeseries indexers in `$MultipleParametersGetter`"))
+    end
+    indexer_type = if has_timeseries_indexers
+        getters = as_timeseries_indexer.(getters)
+        timeseries_idx = indexer_timeseries_index(first(getters))
+        IndexerTimeseries
+    elseif has_non_timeseries_indexers
+        getters = as_not_timeseries_indexer.(getters)
+        timeseries_idx = nothing
+        IndexerNotTimeseries
+    else
+        timeseries_idx = indexer_timeseries_index(first(getters))
+        IndexerBoth
+    end
+
+    if indexer_type != IndexerNotTimeseries &&
+       !allequal(indexer_timeseries_index(g) for g in getters)
+        if indexer_type == IndexerTimeseries
+            throw(ArgumentError("All parameters must belong to the same timeseries"))
+        else
+            indexer_type = IndexerNotTimeseries
+            timeseries_idx = MixedTimeseriesIndexes(indexer_timeseries_index.(getters))
+            getters = as_not_timeseries_indexer.(getters)
+        end
+    end
+
+    return MultipleParametersGetter{indexer_type, typeof(getters), typeof(timeseries_idx)}(
+        getters, timeseries_idx)
 end
 
 const AtLeastTimeseriesMPG = Union{
